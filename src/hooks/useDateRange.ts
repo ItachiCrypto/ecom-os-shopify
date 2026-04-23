@@ -23,7 +23,13 @@ export interface DateRange {
 
 const STORAGE_KEY = "ecomos_dateRange_v1";
 
-function iso(d: Date): string {
+/**
+ * Format a Date as YYYY-MM-DD using LOCAL time (not UTC).
+ * Important: this matches the user's perception of "today".
+ * Using `date.toISOString().slice(0,10)` instead would give UTC date,
+ * which can be off-by-one around midnight in non-UTC timezones.
+ */
+export function iso(d: Date): string {
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, "0");
   const day = String(d.getDate()).padStart(2, "0");

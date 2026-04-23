@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import Shell from "@/components/Shell";
 import { fmtMoney } from "@/lib/order-utils";
 import { useDateRangeCtx } from "@/components/DateRangeContext";
-import { inRange } from "@/hooks/useDateRange";
+import { inRange, iso } from "@/hooks/useDateRange";
 import type { ProductCost, Bundle } from "@/lib/types";
 
 interface Money { shopMoney: { amount: string; currencyCode: string } }
@@ -126,16 +126,19 @@ function Profit() {
       cogs: number;
     }>();
 
-    // Init all days in range with 0s
+    // Init all days in range with 0s — use LOCAL date (iso) so "today" is included
+    // even when the user's timezone differs from UTC.
     const fromDate = new Date(range.from + "T00:00:00");
     const toDate = new Date(range.to + "T00:00:00");
     for (let d = new Date(fromDate); d <= toDate; d.setDate(d.getDate() + 1)) {
-      const key = d.toISOString().slice(0, 10);
+      const key = iso(d);
       dayMap.set(key, { date: key, orders: 0, qtyByVariant: {}, sales: 0, cogs: 0 });
     }
 
     for (const o of filteredOrders) {
-      const dayKey = o.createdAt.slice(0, 10);
+      // Use LOCAL date of the order (not UTC) so orders placed late evening
+      // don't get bucketed into the next day.
+      const dayKey = iso(new Date(o.createdAt));
       const day = dayMap.get(dayKey);
       if (!day) continue;
       day.orders += 1;
