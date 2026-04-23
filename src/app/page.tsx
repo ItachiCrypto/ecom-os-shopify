@@ -2,7 +2,8 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Shell from "@/components/Shell";
-import { formatCurrency, formatNumber, formatPct } from "@/lib/format";
+import { fmtMoney, getRealFees, hasRealFeeData } from "@/lib/order-utils";
+import type { Transaction } from "@/lib/order-utils";
 
 interface OrderMoney { shopMoney: { amount: string; currencyCode: string } }
 interface Order {
@@ -15,12 +16,11 @@ interface Order {
   currentTotalPriceSet: OrderMoney;
   totalRefundedSet: OrderMoney;
   totalDiscountsSet: OrderMoney;
+  transactions: Transaction[];
 }
 
 interface ShopData {
   config: {
-    shopifyPct: number;
-    shopifyFixe: number;
     urssaf: number;
     ir: number;
     objectifCA: number;
@@ -43,16 +43,17 @@ export default function DashboardPage() {
 function Dashboard() {
   const [orders, setOrders] = useState<Order[] | null>(null);
   const [data, setData] = useState<ShopData | null>(null);
-  const [currency, setCurrency] = useState("EUR");
+  const [currency, setCurrency] = useState("USD");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     const load = async () => {
       try {
-        const [oRes, dRes] = await Promise.all([
+        const [oRes, dRes, sRes] = await Promise.all([
           fetch("/api/orders?all=true"),
           fetch("/api/data"),
+          fetch("/api/shop"),
         ]);
         if (!oRes.ok) throw new Error((await oRes.json()).error || "orders failed");
         if (!dRes.ok) throw new Error((await dRes.json()).error || "data failed");
@@ -60,8 +61,9 @@ function Dashboard() {
         const dJson = await dRes.json();
         setOrders(oJson.orders);
         setData(dJson.data);
-        if (oJson.orders?.[0]?.currentTotalPriceSet?.shopMoney?.currencyCode) {
-          setCurrency(oJson.orders[0].currentTotalPriceSet.shopMoney.currencyCode);
+        if (sRes.ok) {
+          const sJson = await sRes.json();
+          if (sJson.shop?.currencyCode) setCurrency(sJson.shop.currencyCode);
         }
       } catch (e) {
         setError(e instanceof Error ? e.message : "Load error");
@@ -79,20 +81,22 @@ function Dashboard() {
     const weekAgo = new Date(today.getTime() - 7 * 86400_000);
     const monthAgo = new Date(today.getTime() - 30 * 86400_000);
 
-    const sum = (arr: Order[], field: (o: Order) => number) =>
-      arr.reduce((s, o) => s + field(o), 0);
     const gross = (o: Order) => parseFloat(o.currentTotalPriceSet.shopMoney.amount);
     const refund = (o: Order) => parseFloat(o.totalRefundedSet.shopMoney.amount);
+    const realFee = (o: Order) => getRealFees(o);
 
     const today_orders = orders.filter((o) => new Date(o.createdAt) >= today);
     const week_orders = orders.filter((o) => new Date(o.createdAt) >= weekAgo);
     const month_orders = orders.filter((o) => new Date(o.createdAt) >= monthAgo);
 
-    const caToday = sum(today_orders, gross);
-    const caWeek = sum(week_orders, gross);
-    const caMonth = sum(month_orders, gross);
-    const caTotal = sum(orders, gross);
-    const refundsTotal = sum(orders, refund);
+    const caToday = today_orders.reduce((s, o) => s + gross(o), 0);
+    const caWeek = week_orders.reduce((s, o) => s + gross(o), 0);
+    const caMonth = month_orders.reduce((s, o) => s + gross(o), 0);
+    const caTotal = orders.reduce((s, o) => s + gross(o), 0);
+    const refundsTotal = orders.reduce((s, o) => s + refund(o), 0);
+    const feesTotal = orders.reduce((s, o) => s + realFee(o), 0);
+    const netTotal = caTotal - refundsTotal - feesTotal;
+    const ordersWithFeeData = orders.filter((o) => hasRealFeeData(o)).length;
 
     const totalAds = data.tresorerie.reduce((s, t) => s + t.adsDepenses, 0);
     const totalFournisseur = data.tresorerie.reduce((s, t) => s + t.fournisseurPaye, 0);
@@ -100,18 +104,16 @@ function Dashboard() {
       .filter((a) => a.active)
       .reduce((s, a) => s + (a.montant * 30) / a.cycleJours, 0);
 
-    const provisions = (caTotal * (data.config.urssaf + data.config.ir)) / 100;
-    const benef = caTotal - refundsTotal - totalAds - totalFournisseur - provisions - abosMensuel;
+    const provisions = (netTotal * (data.config.urssaf + data.config.ir)) / 100;
+    const benef = netTotal - totalAds - totalFournisseur - provisions - abosMensuel;
     const solde = data.config.soldeInitial + benef;
 
-    // Runway: days until solde hits 0 at current burn rate
     const dailyBurn = totalAds / 30 + abosMensuel / 30 + totalFournisseur / 30;
     const runway = dailyBurn > 0 ? solde / dailyBurn : 999;
 
-    const objCaPct = Math.min((caWeek / data.config.objectifCA) * 100, 100);
-    const pendingFulfill = orders.filter(
-      (o) => o.displayFulfillmentStatus === "UNFULFILLED"
-    ).length;
+    const objCaPct =
+      data.config.objectifCA > 0 ? Math.min((caWeek / data.config.objectifCA) * 100, 100) : 0;
+    const pendingFulfill = orders.filter((o) => o.displayFulfillmentStatus === "UNFULFILLED").length;
 
     return {
       caToday,
@@ -119,6 +121,9 @@ function Dashboard() {
       caMonth,
       caTotal,
       refundsTotal,
+      feesTotal,
+      netTotal,
+      ordersWithFeeData,
       totalAds,
       totalFournisseur,
       abosMensuel,
@@ -148,44 +153,73 @@ function Dashboard() {
   }
   if (!stats || !orders) return null;
 
+  const configNeeded = data!.config.objectifCA === 0 && data!.config.urssaf === 0;
+
   return (
     <div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1.5rem" }}>
         <div>
           <h1 style={{ fontSize: "1.75rem", fontWeight: 600, margin: 0 }}>Dashboard</h1>
           <div style={{ color: "var(--text-dim)", fontSize: "0.875rem", marginTop: "0.25rem" }}>
-            Données Shopify en temps réel — {stats.totalOrders} commandes
+            {stats.totalOrders} commandes Shopify · {currency}
+            {stats.ordersWithFeeData > 0 && (
+              <> · <span style={{ color: "var(--green)" }}>{stats.ordersWithFeeData} avec vrais frais Shopify</span></>
+            )}
           </div>
         </div>
       </div>
+
+      {configNeeded && (
+        <div className="card" style={{ borderColor: "var(--accent)", marginBottom: "1rem", background: "rgba(200, 165, 90, 0.05)" }}>
+          <div style={{ fontWeight: 500, marginBottom: "0.25rem" }}>⚙️ Configuration recommandée</div>
+          <div style={{ fontSize: "0.85rem", color: "var(--text-dim)" }}>
+            Va dans <a href="/parametres" style={{ color: "var(--accent)" }}>Paramètres</a> pour définir ton solde initial, taux URSSAF/IR, et objectifs CA.
+            Les autres données (commandes, frais, marchés) viennent directement de Shopify.
+          </div>
+        </div>
+      )}
 
       {/* KPIs */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "1rem", marginBottom: "1.5rem" }}>
         <div className="kpi">
           <div className="kpi-label">Solde actuel</div>
           <div className={`kpi-value ${stats.solde > 0 ? "green" : "red"}`}>
-            {formatCurrency(stats.solde, currency)}
+            {fmtMoney(stats.solde, currency)}
           </div>
           <div className="kpi-delta">
-            Bénéfice: <span className={stats.benef >= 0 ? "green" : "red"}>{formatCurrency(stats.benef, currency)}</span>
+            Bénéfice: <span className={stats.benef >= 0 ? "green" : "red"}>{fmtMoney(stats.benef, currency)}</span>
+          </div>
+        </div>
+
+        <div className="kpi">
+          <div className="kpi-label">CA Total</div>
+          <div className="kpi-value accent">{fmtMoney(stats.caTotal, currency)}</div>
+          <div className="kpi-delta">{stats.totalOrders} commandes</div>
+        </div>
+
+        <div className="kpi">
+          <div className="kpi-label">Net reçu (après frais)</div>
+          <div className="kpi-value blue">{fmtMoney(stats.netTotal, currency)}</div>
+          <div className="kpi-delta">
+            Frais: <span className="red">{fmtMoney(stats.feesTotal, currency)}</span>
           </div>
         </div>
 
         <div className="kpi">
           <div className="kpi-label">CA Aujourd&apos;hui</div>
-          <div className="kpi-value accent">{formatCurrency(stats.caToday, currency)}</div>
+          <div className="kpi-value accent">{fmtMoney(stats.caToday, currency)}</div>
           <div className="kpi-delta">{stats.ordersToday} commande{stats.ordersToday > 1 ? "s" : ""}</div>
         </div>
 
         <div className="kpi">
           <div className="kpi-label">CA 7 jours</div>
-          <div className="kpi-value blue">{formatCurrency(stats.caWeek, currency)}</div>
+          <div className="kpi-value blue">{fmtMoney(stats.caWeek, currency)}</div>
           <div className="kpi-delta">{stats.ordersWeek} commandes</div>
         </div>
 
         <div className="kpi">
           <div className="kpi-label">CA 30 jours</div>
-          <div className="kpi-value blue">{formatCurrency(stats.caMonth, currency)}</div>
+          <div className="kpi-value blue">{fmtMoney(stats.caMonth, currency)}</div>
           <div className="kpi-delta">{stats.ordersMonth} commandes</div>
         </div>
 
@@ -206,50 +240,51 @@ function Dashboard() {
         </div>
       </div>
 
-      {/* Progress bars */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem", marginBottom: "1.5rem" }}>
-        <div className="card">
-          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "0.5rem" }}>
-            <div style={{ fontSize: "0.9rem", fontWeight: 500 }}>Objectif CA / semaine</div>
-            <div className="mono" style={{ fontSize: "0.85rem", color: "var(--text-dim)" }}>
-              {formatCurrency(stats.caWeek, currency)} / {formatCurrency(data!.config.objectifCA, currency)}
+      {/* Objectif + Dépenses */}
+      {(data!.config.objectifCA > 0 || stats.totalAds > 0 || stats.abosMensuel > 0) && (
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem", marginBottom: "1.5rem" }}>
+          {data!.config.objectifCA > 0 && (
+            <div className="card">
+              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "0.5rem" }}>
+                <div style={{ fontSize: "0.9rem", fontWeight: 500 }}>Objectif CA / semaine</div>
+                <div className="mono" style={{ fontSize: "0.85rem", color: "var(--text-dim)" }}>
+                  {fmtMoney(stats.caWeek, currency)} / {fmtMoney(data!.config.objectifCA, currency)}
+                </div>
+              </div>
+              <div className="progress">
+                <div className={`progress-fill ${stats.objCaPct >= 100 ? "green" : ""}`} style={{ width: `${stats.objCaPct}%` }} />
+              </div>
+              <div style={{ fontSize: "0.75rem", color: "var(--text-dim)", marginTop: "0.35rem" }}>
+                {stats.objCaPct.toFixed(1)}%
+              </div>
             </div>
-          </div>
-          <div className="progress">
-            <div
-              className={`progress-fill ${stats.objCaPct >= 100 ? "green" : ""}`}
-              style={{ width: `${stats.objCaPct}%` }}
-            />
-          </div>
-          <div style={{ fontSize: "0.75rem", color: "var(--text-dim)", marginTop: "0.35rem" }}>
-            {formatPct(stats.objCaPct)}
-          </div>
-        </div>
+          )}
 
-        <div className="card">
-          <div style={{ fontSize: "0.9rem", fontWeight: 500, marginBottom: "0.5rem" }}>
-            Dépenses totales
-          </div>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.5rem", fontSize: "0.85rem" }}>
-            <div>
-              <div style={{ color: "var(--text-dim)" }}>Ads</div>
-              <div className="mono red">{formatCurrency(stats.totalAds, currency)}</div>
+          <div className="card">
+            <div style={{ fontSize: "0.9rem", fontWeight: 500, marginBottom: "0.5rem" }}>
+              Dépenses (saisies dans Trésorerie)
             </div>
-            <div>
-              <div style={{ color: "var(--text-dim)" }}>Fournisseur</div>
-              <div className="mono orange">{formatCurrency(stats.totalFournisseur, currency)}</div>
-            </div>
-            <div>
-              <div style={{ color: "var(--text-dim)" }}>Abonnements /mois</div>
-              <div className="mono">{formatCurrency(stats.abosMensuel, currency)}</div>
-            </div>
-            <div>
-              <div style={{ color: "var(--text-dim)" }}>Provisions URSSAF+IR</div>
-              <div className="mono accent">{formatCurrency(stats.provisions, currency)}</div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.5rem", fontSize: "0.85rem" }}>
+              <div>
+                <div style={{ color: "var(--text-dim)" }}>Ads</div>
+                <div className="mono red">{fmtMoney(stats.totalAds, currency)}</div>
+              </div>
+              <div>
+                <div style={{ color: "var(--text-dim)" }}>Fournisseur</div>
+                <div className="mono orange">{fmtMoney(stats.totalFournisseur, currency)}</div>
+              </div>
+              <div>
+                <div style={{ color: "var(--text-dim)" }}>Abonnements /mois</div>
+                <div className="mono">{fmtMoney(stats.abosMensuel, currency)}</div>
+              </div>
+              <div>
+                <div style={{ color: "var(--text-dim)" }}>Provisions URSSAF+IR</div>
+                <div className="mono accent">{fmtMoney(stats.provisions, currency)}</div>
+              </div>
             </div>
           </div>
         </div>
-      </div>
+      )}
 
       {/* Recent orders */}
       <div className="card">
@@ -269,59 +304,45 @@ function Dashboard() {
                 <th>Statut</th>
                 <th>Fulfillment</th>
                 <th style={{ textAlign: "right" }}>Total</th>
+                <th style={{ textAlign: "right" }}>Frais Shopify</th>
               </tr>
             </thead>
             <tbody>
-              {orders.slice(0, 10).map((o) => (
-                <tr key={o.id}>
-                  <td className="mono">{o.name}</td>
-                  <td style={{ fontSize: "0.8rem", color: "var(--text-dim)" }}>
-                    {new Date(o.createdAt).toLocaleString("fr-FR", {
-                      day: "2-digit",
-                      month: "short",
-                      hour: "2-digit",
-                      minute: "2-digit",
-                    })}
-                  </td>
-                  <td>{o.shippingAddress?.countryCodeV2 || "—"}</td>
-                  <td>
-                    <span
-                      className={`pill ${
-                        o.displayFinancialStatus === "PAID"
-                          ? "pill-green"
-                          : o.displayFinancialStatus === "PENDING"
-                          ? "pill-orange"
-                          : "pill-gray"
-                      }`}
-                    >
-                      {o.displayFinancialStatus}
-                    </span>
-                  </td>
-                  <td>
-                    <span
-                      className={`pill ${
-                        o.displayFulfillmentStatus === "FULFILLED"
-                          ? "pill-green"
-                          : o.displayFulfillmentStatus === "UNFULFILLED"
-                          ? "pill-orange"
-                          : "pill-gray"
-                      }`}
-                    >
-                      {o.displayFulfillmentStatus}
-                    </span>
-                  </td>
-                  <td className="mono" style={{ textAlign: "right", fontWeight: 500 }}>
-                    {formatCurrency(parseFloat(o.currentTotalPriceSet.shopMoney.amount), currency)}
-                  </td>
-                </tr>
-              ))}
+              {orders.slice(0, 10).map((o) => {
+                const fees = getRealFees(o);
+                return (
+                  <tr key={o.id}>
+                    <td className="mono">{o.name}</td>
+                    <td style={{ fontSize: "0.8rem", color: "var(--text-dim)" }}>
+                      {new Date(o.createdAt).toLocaleString("fr-FR", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}
+                    </td>
+                    <td>{o.shippingAddress?.countryCodeV2 || "—"}</td>
+                    <td>
+                      <span className={`pill ${o.displayFinancialStatus === "PAID" ? "pill-green" : o.displayFinancialStatus === "PENDING" ? "pill-orange" : "pill-gray"}`}>
+                        {o.displayFinancialStatus}
+                      </span>
+                    </td>
+                    <td>
+                      <span className={`pill ${o.displayFulfillmentStatus === "FULFILLED" ? "pill-green" : o.displayFulfillmentStatus === "UNFULFILLED" ? "pill-orange" : "pill-gray"}`}>
+                        {o.displayFulfillmentStatus}
+                      </span>
+                    </td>
+                    <td className="mono" style={{ textAlign: "right", fontWeight: 500 }}>
+                      {fmtMoney(parseFloat(o.currentTotalPriceSet.shopMoney.amount), currency)}
+                    </td>
+                    <td className="mono red" style={{ textAlign: "right", fontSize: "0.85rem" }}>
+                      {fees > 0 ? `-${fmtMoney(fees, currency)}` : "—"}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
       </div>
 
       <div style={{ marginTop: "2rem", fontSize: "0.8rem", color: "var(--text-faint)", textAlign: "center" }}>
-        EcomOS · Dashboard connecté à Shopify · Données mises à jour en temps réel
+        EcomOS · Données 100% Shopify en temps réel
       </div>
     </div>
   );

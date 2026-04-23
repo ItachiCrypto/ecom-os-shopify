@@ -64,6 +64,19 @@ const ORDERS_QUERY = `
           totalTaxSet { shopMoney { amount currencyCode } }
           totalDiscountsSet { shopMoney { amount currencyCode } }
           paymentGatewayNames
+          transactions(first: 10) {
+            id
+            kind
+            status
+            gateway
+            amountSet { shopMoney { amount currencyCode } }
+            fees {
+              amount { amount currencyCode }
+              rate
+              flatFee { amount currencyCode }
+              rateName
+            }
+          }
           lineItems(first: 20) {
             edges {
               node {
@@ -121,6 +134,7 @@ const SHOP_QUERY = `
       currencyCode
       ianaTimezone
       plan { displayName }
+      billingAddress { countryCodeV2 country }
     }
   }
 `;
@@ -135,9 +149,63 @@ export async function getShopInfo(shop: string) {
       currencyCode: string;
       ianaTimezone: string;
       plan: { displayName: string };
+      billingAddress: { countryCodeV2: string; country: string } | null;
     };
   }>(shop, SHOP_QUERY);
   return data.shop;
+}
+
+// ---------- Markets ----------
+
+const MARKETS_QUERY = `
+  query GetMarkets {
+    markets(first: 50) {
+      edges {
+        node {
+          id
+          name
+          handle
+          enabled
+          primary
+          regions(first: 50) {
+            edges {
+              node {
+                ... on MarketRegionCountry {
+                  id
+                  name
+                  code
+                  currency { currencyCode }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+`;
+
+export async function getMarkets(shop: string) {
+  try {
+    const data = await shopifyGraphQL<{
+      markets: {
+        edges: {
+          node: {
+            id: string;
+            name: string;
+            handle: string;
+            enabled: boolean;
+            primary: boolean;
+            regions: { edges: { node: { id: string; name: string; code: string; currency: { currencyCode: string } } }[] };
+          };
+        }[];
+      };
+    }>(shop, MARKETS_QUERY);
+    return data.markets.edges.map((e) => e.node);
+  } catch (e) {
+    console.warn("[shopify] markets query failed (scope read_markets may be required):", e);
+    return [];
+  }
 }
 
 // ---------- Products ----------

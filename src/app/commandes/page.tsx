@@ -2,7 +2,9 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Shell from "@/components/Shell";
-import { formatCurrency, formatDateTime, normalizePaymentMethod, computeFees } from "@/lib/format";
+import { fmtMoney, getRealFees, hasRealFeeData } from "@/lib/order-utils";
+import type { Transaction } from "@/lib/order-utils";
+import { formatDateTime } from "@/lib/format";
 
 interface Money { shopMoney: { amount: string; currencyCode: string } }
 interface Order {
@@ -20,24 +22,15 @@ interface Order {
   totalTaxSet: Money;
   totalDiscountsSet: Money;
   paymentGatewayNames: string[];
+  transactions: Transaction[];
 }
 
 interface ShopData {
-  config: {
-    shopifyPct: number;
-    shopifyFixe: number;
-    urssaf: number;
-    ir: number;
-    fraisParMethode: Record<string, Record<string, { pct: number; fixe: number }>>;
-  };
+  config: { urssaf: number; ir: number };
 }
 
 export default function CommandesPage() {
-  return (
-    <Shell>
-      <Commandes />
-    </Shell>
-  );
+  return <Shell><Commandes /></Shell>;
 }
 
 function Commandes() {
@@ -46,18 +39,23 @@ function Commandes() {
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState("");
   const [country, setCountry] = useState("");
-  const [currency, setCurrency] = useState("EUR");
+  const [currency, setCurrency] = useState("USD");
 
   useEffect(() => {
     const load = async () => {
       try {
-        const [o, d] = await Promise.all([fetch("/api/orders?all=true"), fetch("/api/data")]);
+        const [o, d, s] = await Promise.all([
+          fetch("/api/orders?all=true"),
+          fetch("/api/data"),
+          fetch("/api/shop"),
+        ]);
         const oj = await o.json();
         const dj = await d.json();
         setOrders(oj.orders);
         setData(dj.data);
-        if (oj.orders?.[0]?.currentTotalPriceSet?.shopMoney?.currencyCode) {
-          setCurrency(oj.orders[0].currentTotalPriceSet.shopMoney.currencyCode);
+        if (s.ok) {
+          const sj = await s.json();
+          if (sj.shop?.currencyCode) setCurrency(sj.shop.currencyCode);
         }
       } finally {
         setLoading(false);
@@ -88,21 +86,15 @@ function Commandes() {
   }, [orders]);
 
   const totals = useMemo(() => {
-    if (!data) return { ca: 0, frais: 0, net: 0, profit: 0, refund: 0 };
-    const sumAmt = (arr: Order[], f: (o: Order) => number) => arr.reduce((s, o) => s + f(o), 0);
-    const ca = sumAmt(filtered, (o) => parseFloat(o.currentTotalPriceSet.shopMoney.amount));
-    const refund = sumAmt(filtered, (o) => parseFloat(o.totalRefundedSet.shopMoney.amount));
-    let frais = 0;
-    filtered.forEach((o) => {
-      const m = o.shippingAddress?.countryCodeV2 || "FR";
-      const p = normalizePaymentMethod(o.paymentGatewayNames[0] || "VISA");
-      const amt = parseFloat(o.currentTotalPriceSet.shopMoney.amount);
-      frais += computeFees(amt, m, p, data.config.fraisParMethode);
-    });
-    const net = ca - frais;
+    if (!data) return { ca: 0, frais: 0, net: 0, profit: 0, refund: 0, withFeeData: 0 };
+    const ca = filtered.reduce((s, o) => s + parseFloat(o.currentTotalPriceSet.shopMoney.amount), 0);
+    const refund = filtered.reduce((s, o) => s + parseFloat(o.totalRefundedSet.shopMoney.amount), 0);
+    const frais = filtered.reduce((s, o) => s + getRealFees(o), 0);
+    const withFeeData = filtered.filter(hasRealFeeData).length;
+    const net = ca - refund - frais;
     const provisions = (net * (data.config.urssaf + data.config.ir)) / 100;
-    const profit = net - provisions - refund;
-    return { ca, frais, net, profit, refund };
+    const profit = net - provisions;
+    return { ca, frais, net, profit, refund, withFeeData };
   }, [filtered, data]);
 
   if (loading) return <div style={{ color: "var(--text-dim)" }}>Chargement...</div>;
@@ -113,17 +105,17 @@ function Commandes() {
       <div style={{ marginBottom: "1.5rem" }}>
         <h1 style={{ fontSize: "1.75rem", fontWeight: 600, margin: 0 }}>Commandes</h1>
         <div style={{ color: "var(--text-dim)", fontSize: "0.875rem", marginTop: "0.25rem" }}>
-          {filtered.length} commandes{country ? ` · Pays: ${country}` : ""}
+          {filtered.length} commandes · {totals.withFeeData} avec vrais frais Shopify{country ? ` · Pays: ${country}` : ""}
         </div>
       </div>
 
       {/* Totals */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: "1rem", marginBottom: "1.5rem" }}>
-        <div className="kpi"><div className="kpi-label">CA total</div><div className="kpi-value accent">{formatCurrency(totals.ca, currency)}</div></div>
-        <div className="kpi"><div className="kpi-label">Frais paiement</div><div className="kpi-value red">{formatCurrency(totals.frais, currency)}</div></div>
-        <div className="kpi"><div className="kpi-label">Net reçu</div><div className="kpi-value blue">{formatCurrency(totals.net, currency)}</div></div>
-        <div className="kpi"><div className="kpi-label">Remboursé</div><div className="kpi-value orange">{formatCurrency(totals.refund, currency)}</div></div>
-        <div className="kpi"><div className="kpi-label">Profit estimé</div><div className={`kpi-value ${totals.profit >= 0 ? "green" : "red"}`}>{formatCurrency(totals.profit, currency)}</div></div>
+        <div className="kpi"><div className="kpi-label">CA total</div><div className="kpi-value accent">{fmtMoney(totals.ca, currency)}</div></div>
+        <div className="kpi"><div className="kpi-label">Frais Shopify</div><div className="kpi-value red">{fmtMoney(totals.frais, currency)}</div></div>
+        <div className="kpi"><div className="kpi-label">Net reçu</div><div className="kpi-value blue">{fmtMoney(totals.net, currency)}</div></div>
+        <div className="kpi"><div className="kpi-label">Remboursé</div><div className="kpi-value orange">{fmtMoney(totals.refund, currency)}</div></div>
+        <div className="kpi"><div className="kpi-label">Profit estimé</div><div className={`kpi-value ${totals.profit >= 0 ? "green" : "red"}`}>{fmtMoney(totals.profit, currency)}</div></div>
       </div>
 
       {/* Filters */}
@@ -160,12 +152,11 @@ function Commandes() {
             </thead>
             <tbody>
               {filtered.map((o) => {
-                const m = o.shippingAddress?.countryCodeV2 || "FR";
-                const p = normalizePaymentMethod(o.paymentGatewayNames[0] || "VISA");
                 const amt = parseFloat(o.currentTotalPriceSet.shopMoney.amount);
                 const refund = parseFloat(o.totalRefundedSet.shopMoney.amount);
-                const frais = computeFees(amt, m, p, data.config.fraisParMethode);
-                const net = amt - frais;
+                const frais = getRealFees(o);
+                const net = amt - refund - frais;
+                const gateway = o.paymentGatewayNames[0] || "—";
                 return (
                   <tr key={o.id}>
                     <td className="mono">{o.name}</td>
@@ -173,18 +164,20 @@ function Commandes() {
                     <td style={{ fontSize: "0.85rem" }}>
                       {o.customer ? `${o.customer.firstName || ""} ${o.customer.lastName || ""}`.trim() || o.customer.email : "—"}
                     </td>
-                    <td>{m}</td>
-                    <td style={{ fontSize: "0.8rem" }}>{p}</td>
+                    <td>{o.shippingAddress?.countryCodeV2 || "—"}</td>
+                    <td style={{ fontSize: "0.8rem" }}>{gateway}</td>
                     <td>
                       <span className={`pill ${o.displayFinancialStatus === "PAID" ? "pill-green" : "pill-orange"}`}>
                         {o.displayFinancialStatus}
                       </span>
                     </td>
-                    <td className="mono" style={{ textAlign: "right" }}>{formatCurrency(amt, currency)}</td>
-                    <td className="mono red" style={{ textAlign: "right", fontSize: "0.85rem" }}>-{formatCurrency(frais, currency)}</td>
-                    <td className="mono blue" style={{ textAlign: "right" }}>{formatCurrency(net, currency)}</td>
+                    <td className="mono" style={{ textAlign: "right" }}>{fmtMoney(amt, currency)}</td>
+                    <td className="mono red" style={{ textAlign: "right", fontSize: "0.85rem" }}>
+                      {frais > 0 ? `-${fmtMoney(frais, currency)}` : "—"}
+                    </td>
+                    <td className="mono blue" style={{ textAlign: "right" }}>{fmtMoney(net, currency)}</td>
                     <td className="mono orange" style={{ textAlign: "right", fontSize: "0.85rem" }}>
-                      {refund > 0 ? `-${formatCurrency(refund, currency)}` : "—"}
+                      {refund > 0 ? `-${fmtMoney(refund, currency)}` : "—"}
                     </td>
                   </tr>
                 );

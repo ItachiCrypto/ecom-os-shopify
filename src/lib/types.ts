@@ -152,30 +152,21 @@ export interface ShopData {
   historique: { id: string; date: string; action: string; details: string }[];
 }
 
+// Defaults used ONLY if the user hasn't configured anything yet.
+// All values are editable in Paramètres. Markets come from Shopify API.
 export const DEFAULT_CONFIG: EcomConfig = {
-  shopifyPct: 1.5,
-  shopifyFixe: 0.25,
-  urssaf: 6.15,
-  ir: 1,
+  shopifyPct: 0, // Real fees come from Shopify transaction data
+  shopifyFixe: 0,
+  urssaf: 0, // User-configured in Paramètres (French: 6.15%, etc)
+  ir: 0,
   tva: 0,
-  soldeInitial: 2500,
-  markets: [
-    { id: "FR", name: "France", flag: "🇫🇷" },
-    { id: "BE", name: "Belgique", flag: "🇧🇪" },
-    { id: "CH", name: "Suisse", flag: "🇨🇭" },
-    { id: "ES", name: "Espagne", flag: "🇪🇸" },
-    { id: "US", name: "USA", flag: "🇺🇸" },
-  ],
-  fraisParMethode: {
-    VISA: { FR: { pct: 1.5, fixe: 0.25 }, BE: { pct: 1.5, fixe: 0.25 }, CH: { pct: 3.5, fixe: 0.25 }, ES: { pct: 1.5, fixe: 0.25 }, US: { pct: 2.9, fixe: 0.30 } },
-    Mastercard: { FR: { pct: 1.5, fixe: 0.25 }, BE: { pct: 1.5, fixe: 0.25 }, CH: { pct: 3.5, fixe: 0.25 }, ES: { pct: 1.5, fixe: 0.25 }, US: { pct: 2.9, fixe: 0.30 } },
-    PayPal: { FR: { pct: 2.9, fixe: 0.35 }, BE: { pct: 2.9, fixe: 0.35 }, CH: { pct: 2.9, fixe: 0.35 }, ES: { pct: 2.9, fixe: 0.35 }, US: { pct: 2.9, fixe: 0.30 } },
-    Bancontact: { FR: { pct: 1.5, fixe: 0.25 }, BE: { pct: 1.5, fixe: 0.25 }, CH: { pct: 0, fixe: 0 }, ES: { pct: 0, fixe: 0 }, US: { pct: 0, fixe: 0 } },
-  },
-  objectifCA: 500,
-  objectifProfit: 100,
-  alerteRunway: 5,
-  alerteLivraison: { FR: 15, BE: 20, CH: 25, ES: 18, US: 30 },
+  soldeInitial: 0, // User-configured in Paramètres
+  markets: [], // Filled from Shopify Markets API
+  fraisParMethode: {}, // Not used — real fees come from Shopify transactions
+  objectifCA: 0, // User-configured in Paramètres
+  objectifProfit: 0,
+  alerteRunway: 7,
+  alerteLivraison: {},
 };
 
 export function defaultShopData(shop: string, accessToken: string): ShopData {
