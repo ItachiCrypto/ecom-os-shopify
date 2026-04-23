@@ -276,12 +276,11 @@ function Row({ label, value, onChange, step = 0.01 }: { label: string; value: nu
 function ProductCostsSection({
   config,
   products,
-  currency,
   onChange,
 }: {
   config: EcomConfig;
   products: ShopifyProduct[];
-  currency: string;
+  currency: string; // kept in signature for callers, not used
   onChange: (pc: Record<string, ProductCost>) => void;
 }) {
   const [search, setSearch] = useState("");
@@ -299,10 +298,6 @@ function ProductCostsSection({
       variantTitle: e.node.title,
       sku: e.node.sku,
       price: parseFloat(e.node.price),
-      unitCost: e.node.inventoryItem?.unitCost
-        ? parseFloat(e.node.inventoryItem.unitCost.amount)
-        : null,
-      productId: p.id,
       productTitle: p.title,
       productStatus: p.status,
     }))
@@ -317,38 +312,14 @@ function ProductCostsSection({
     return true;
   });
 
-  // Auto-fill price from Shopify if not set
-  const syncFromShopify = () => {
-    const next: Record<string, ProductCost> = { ...costs };
-    flattened.forEach((v) => {
-      const existing = next[v.variantId];
-      next[v.variantId] = {
-        productTitle: v.productTitle,
-        variantTitle: v.variantTitle,
-        price: v.price,
-        cogs: existing?.cogs ?? v.unitCost ?? 0,
-        active: existing?.active ?? true,
-      };
-    });
-    onChange(next);
-  };
-
-  const fmt = (n: number) =>
-    new Intl.NumberFormat("fr-FR", { style: "currency", currency, minimumFractionDigits: 2 }).format(n);
-
   return (
     <div className="card" style={{ gridColumn: "1 / -1" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "start", marginBottom: "0.5rem", gap: "1rem" }}>
-        <div>
-          <div style={{ fontSize: "1.05rem", fontWeight: 600 }}>💰 Coûts produits (COGS)</div>
-          <div style={{ fontSize: "0.75rem", color: "var(--text-dim)", marginTop: "0.25rem", lineHeight: 1.5 }}>
-            Saisis le coût unitaire de chaque variante pour que la page <b>Profit</b> calcule tes marges réelles.
-            Si tu as déjà renseigné le &quot;Unit cost&quot; dans Shopify Inventory, il est importé automatiquement.
-          </div>
+      <div style={{ marginBottom: "0.5rem" }}>
+        <div style={{ fontSize: "1.05rem", fontWeight: 600 }}>💰 Coûts produits (COGS)</div>
+        <div style={{ fontSize: "0.8rem", color: "var(--text-dim)", marginTop: "0.25rem", lineHeight: 1.5 }}>
+          Saisis juste combien te coûte chaque produit. Le CA des commandes vient automatiquement de Shopify —
+          on calcule ensuite la marge réelle en soustrayant tes COGS.
         </div>
-        <button className="btn" onClick={syncFromShopify} style={{ whiteSpace: "nowrap" }}>
-          🔄 Synchroniser depuis Shopify
-        </button>
       </div>
 
       <div style={{ display: "flex", gap: "0.75rem", marginBottom: "0.75rem", marginTop: "0.75rem" }}>
@@ -376,18 +347,14 @@ function ProductCostsSection({
               <tr>
                 <th>Produit / Variante</th>
                 <th>SKU</th>
-                <th style={{ textAlign: "right" }}>Prix Shopify</th>
                 <th style={{ textAlign: "right" }}>Coût unitaire (COGS)</th>
-                <th style={{ textAlign: "right" }}>Marge brute</th>
-                <th style={{ textAlign: "center" }}>Inclure dans Profit</th>
+                <th style={{ textAlign: "center" }}>Inclure</th>
               </tr>
             </thead>
             <tbody>
               {filtered.map((v) => {
                 const existing = costs[v.variantId];
-                const cogsValue = existing?.cogs ?? v.unitCost ?? 0;
-                const marge = v.price - cogsValue;
-                const margePct = v.price > 0 ? (marge / v.price) * 100 : 0;
+                const cogsValue = existing?.cogs ?? 0;
                 const active = existing?.active ?? true;
                 return (
                   <tr key={v.variantId}>
@@ -398,7 +365,6 @@ function ProductCostsSection({
                       )}
                     </td>
                     <td style={{ fontSize: "0.75rem", color: "var(--text-dim)" }} className="mono">{v.sku || "—"}</td>
-                    <td className="mono" style={{ textAlign: "right" }}>{fmt(v.price)}</td>
                     <td style={{ textAlign: "right" }}>
                       <input
                         className="input mono"
@@ -412,11 +378,8 @@ function ProductCostsSection({
                           cogs: parseFloat(e.target.value) || 0,
                           active,
                         })}
-                        style={{ maxWidth: 100, textAlign: "right", marginLeft: "auto" }}
+                        style={{ maxWidth: 110, textAlign: "right", marginLeft: "auto" }}
                       />
-                    </td>
-                    <td className={`mono ${margePct > 50 ? "green" : margePct > 25 ? "orange" : "red"}`} style={{ textAlign: "right" }}>
-                      {cogsValue > 0 ? `${fmt(marge)} (${margePct.toFixed(0)}%)` : "—"}
                     </td>
                     <td style={{ textAlign: "center" }}>
                       <input

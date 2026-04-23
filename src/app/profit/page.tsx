@@ -31,6 +31,7 @@ interface Order {
   totalRefundedSet: Money;
   shippingAddress: { countryCodeV2?: string } | null;
   lineItems: { edges: { node: LineItem }[] };
+  customAttributes?: { key: string; value: string }[];
 }
 
 interface ShopData {
@@ -135,6 +136,9 @@ function Profit() {
       const day = dayMap.get(dayKey);
       if (!day) continue;
       day.orders += 1;
+      // Sales = exactly what Shopify says the order is worth (once per order)
+      // Already accounts for discounts, bundle gifts priced at $0, etc.
+      day.sales += parseFloat(o.currentTotalPriceSet.shopMoney.amount);
 
       for (const { node: li } of o.lineItems.edges) {
         const variantId = li.variant?.id;
@@ -144,14 +148,10 @@ function Profit() {
         if (!pc || !pc.active) continue;
 
         day.qtyByVariant[variantId] = (day.qtyByVariant[variantId] || 0) + li.quantity;
-        // Use discounted total (after Moon Bundles discounts) — a $0 gift doesn't inflate sales
-        day.sales += parseFloat(li.discountedTotalSet.shopMoney.amount);
-        // COGS still counts the real cost of the item (even if sold at $0 as a gift)
+        // COGS = what the product costs us (even if customer got it free)
         day.cogs += li.quantity * pc.cogs;
 
-        // Add bundle extras: e.g. "every ring sold → +1 free lube's cost"
-        // (Only applies if user manually configured a bundle — Moon Bundles gifts are auto-handled
-        // via their own line items with __moonbundle marker, so no extra needed)
+        // Add bundle extras from manual config (ignored if Moon Bundles already handles it)
         const bundleExtra = bundleExtraCogsPerTrigger[variantId] || 0;
         const isMoonBundleLine = (li.customAttributes || []).some((a) => a.key === "__moonbundle");
         if (bundleExtra > 0 && !isMoonBundleLine) {
@@ -426,10 +426,12 @@ function Profit() {
         </div>
       </div>
 
-      <div style={{ fontSize: "0.75rem", color: "var(--text-faint)", marginTop: "0.75rem", lineHeight: 1.5 }}>
-        <b>Formules :</b> Profit Brut = Sales − (Ads × {1 + (data.config.taxOnAdSpend ?? 5) / 100}) − COGS ·
-        {" "}Profit Net = Profit Brut − (Sales × {(data.config.urssaf || 0) + (data.config.ir || 0)}% URSSAF+IR) ·
-        {" "}ROAS = Sales / Ads (HT)
+      <div style={{ fontSize: "0.75rem", color: "var(--text-faint)", marginTop: "0.75rem", lineHeight: 1.6 }}>
+        <div><b>Sales</b> = total exact des commandes Shopify du jour (ce que le client a payé).</div>
+        <div><b>COGS</b> = Σ (quantité vendue × COGS par variante) — gifts inclus (tu paies même ce qui est offert).</div>
+        <div><b>Profit Brut</b> = Sales − (Ads × {(1 + (data.config.taxOnAdSpend ?? 5) / 100).toFixed(2)}) − COGS</div>
+        <div><b>Profit Net</b> = Profit Brut − Sales × {((data.config.urssaf || 0) + (data.config.ir || 0)).toFixed(2)}% (URSSAF+IR)</div>
+        <div><b>ROAS</b> = Sales / Ads (HT)</div>
       </div>
     </div>
   );
