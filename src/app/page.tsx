@@ -5,9 +5,25 @@ import Shell from "@/components/Shell";
 import { fmtMoney, getRealFees, hasRealFeeData } from "@/lib/order-utils";
 import type { Transaction } from "@/lib/order-utils";
 import { useDateRangeCtx } from "@/components/DateRangeContext";
-import { inRange } from "@/hooks/useDateRange";
+import { inRange, iso } from "@/hooks/useDateRange";
+import type { ProductCost, Bundle } from "@/lib/types";
 
 interface OrderMoney { shopMoney: { amount: string; currencyCode: string } }
+interface Variant {
+  id: string;
+  title: string;
+  price: string;
+  sku?: string | null;
+  product?: { id: string; title: string } | null;
+}
+interface LineItem {
+  title: string;
+  quantity: number;
+  variant: Variant | null;
+  originalTotalSet: OrderMoney;
+  discountedTotalSet: OrderMoney;
+  customAttributes: { key: string; value: string }[];
+}
 interface Order {
   id: string;
   name: string;
@@ -19,19 +35,24 @@ interface Order {
   totalRefundedSet: OrderMoney;
   totalDiscountsSet: OrderMoney;
   transactions: Transaction[];
+  lineItems: { edges: { node: LineItem }[] };
 }
 
 interface ShopData {
   config: {
     urssaf: number;
     ir: number;
+    tva: number;
     objectifCA: number;
     objectifProfit: number;
     soldeInitial: number;
     alerteRunway: number;
+    taxOnAdSpend?: number;
+    productCosts?: Record<string, ProductCost>;
+    bundles?: Bundle[];
+    dailyAds?: Record<string, { spend: number; notes?: string }>;
+    shippingCostByQty?: Record<string, number>;
   };
-  abonnements: { montant: number; cycleJours: number; active: boolean; name: string; dateDebut: string; id: string }[];
-  tresorerie: { caBrut: number; adsDepenses: number; fournisseurPaye: number; date: string }[];
 }
 
 export default function DashboardPage() {
@@ -94,33 +115,112 @@ function Dashboard() {
     const refund = (o: Order) => parseFloat(o.totalRefundedSet.shopMoney.amount);
     const realFee = (o: Order) => getRealFees(o);
 
-    // "Today/Week/Month" are relative to TODAY, independent of the active range filter
-    // (they show intra-period info within whatever the user has filtered)
+    // ──────────────────────────────────────────────────────────────────
+    // SAME LOGIC AS PROFIT JOURNALIER — keep the two pages in sync
+    // ──────────────────────────────────────────────────────────────────
+    const productCosts = data.config.productCosts || {};
+    const bundles = (data.config.bundles || []).filter((b) => b.active);
+    const dailyAds = data.config.dailyAds || {};
+    const taxOnAdSpend = data.config.taxOnAdSpend ?? 5;
+    const urssaf = data.config.urssaf || 0;
+    const ir = data.config.ir || 0;
+    const tva = data.config.tva || 0;
+    const totalTaxOnSalesRate = urssaf + ir + tva;
+
+    // Pre-compute bundle COGS per trigger variant
+    const bundleExtraCogsPerTrigger: Record<string, number> = {};
+    for (const b of bundles) {
+      const bundleCogs = b.items.reduce((s, it) => {
+        const pc = productCosts[it.variantId];
+        return s + (pc?.cogs || 0) * it.quantity;
+      }, 0);
+      for (const tid of b.triggerVariantIds) {
+        bundleExtraCogsPerTrigger[tid] = (bundleExtraCogsPerTrigger[tid] || 0) + bundleCogs;
+      }
+    }
+
+    // Shipping brackets
+    const shippingBrackets = Object.entries(data.config.shippingCostByQty || {})
+      .map(([k, v]) => ({ qty: Number(k), cost: v }))
+      .filter((b) => b.qty > 0 && b.cost > 0)
+      .sort((a, b) => a.qty - b.qty);
+    const getShippingCost = (orderQty: number): number => {
+      if (shippingBrackets.length === 0 || orderQty <= 0) return 0;
+      for (const b of shippingBrackets) {
+        if (orderQty <= b.qty) return b.cost;
+      }
+      return shippingBrackets[shippingBrackets.length - 1].cost;
+    };
+
+    // Compute totals in the active range
+    let totalSales = 0;
+    let totalCogs = 0;
+    for (const o of orders) {
+      totalSales += gross(o);
+      let orderQty = 0;
+      for (const { node: li } of o.lineItems.edges) {
+        orderQty += li.quantity;
+        const variantId = li.variant?.id;
+        if (!variantId) continue;
+        const pc = productCosts[variantId];
+        if (!pc || !pc.active) continue;
+        totalCogs += li.quantity * pc.cogs;
+        const bundleExtra = bundleExtraCogsPerTrigger[variantId] || 0;
+        const isMoonBundleLine = (li.customAttributes || []).some((a) => a.key === "__moonbundle");
+        if (bundleExtra > 0 && !isMoonBundleLine) {
+          totalCogs += li.quantity * bundleExtra;
+        }
+      }
+      totalCogs += getShippingCost(orderQty);
+    }
+
+    // Ads from dailyAds within the active range
+    let totalAdsHT = 0;
+    for (const [date, entry] of Object.entries(dailyAds)) {
+      if (date >= range.from && date <= range.to) {
+        totalAdsHT += entry.spend || 0;
+      }
+    }
+    const totalAdsTTC = totalAdsHT * (1 + taxOnAdSpend / 100);
+
+    // Taxes on sales
+    const totalTaxes = (totalSales * totalTaxOnSalesRate) / 100;
+
+    // Profit calculation (matches Profit Journalier)
+    const profitBrut = totalSales - totalAdsTTC - totalCogs;
+    const profitNet = profitBrut - totalTaxes;
+    const profitNetPct = totalSales > 0 ? (profitNet / totalSales) * 100 : 0;
+    const roas = totalAdsHT > 0 ? totalSales / totalAdsHT : 0;
+
+    // Solde = solde initial + profit net on this period
+    const solde = data.config.soldeInitial + profitNet;
+
+    // Runway based on average daily burn in the range
+    const rangeDays = Math.max(
+      1,
+      Math.ceil(
+        (new Date(range.to + "T00:00:00").getTime() - new Date(range.from + "T00:00:00").getTime()) /
+          86400_000
+      ) + 1
+    );
+    const dailyBurn = (totalAdsTTC + totalCogs) / rangeDays;
+    const runway = dailyBurn > 0 ? solde / dailyBurn : 999;
+
+    // Today/Week/Month CA — computed within the filtered orders, relative to real today
     const today_orders = orders.filter((o) => new Date(o.createdAt) >= today);
     const week_orders = orders.filter((o) => new Date(o.createdAt) >= weekAgo);
     const month_orders = orders.filter((o) => new Date(o.createdAt) >= monthAgo);
-
     const caToday = today_orders.reduce((s, o) => s + gross(o), 0);
     const caWeek = week_orders.reduce((s, o) => s + gross(o), 0);
     const caMonth = month_orders.reduce((s, o) => s + gross(o), 0);
-    const caTotal = orders.reduce((s, o) => s + gross(o), 0);
+
     const refundsTotal = orders.reduce((s, o) => s + refund(o), 0);
     const feesTotal = orders.reduce((s, o) => s + realFee(o), 0);
-    const netTotal = caTotal - refundsTotal - feesTotal;
     const ordersWithFeeData = orders.filter((o) => hasRealFeeData(o)).length;
-
-    const totalAds = data.tresorerie.reduce((s, t) => s + t.adsDepenses, 0);
-    const totalFournisseur = data.tresorerie.reduce((s, t) => s + t.fournisseurPaye, 0);
-    const abosMensuel = data.abonnements
-      .filter((a) => a.active)
-      .reduce((s, a) => s + (a.montant * 30) / a.cycleJours, 0);
-
-    const provisions = (netTotal * (data.config.urssaf + data.config.ir)) / 100;
-    const benef = netTotal - totalAds - totalFournisseur - provisions - abosMensuel;
-    const solde = data.config.soldeInitial + benef;
-
-    const dailyBurn = totalAds / 30 + abosMensuel / 30 + totalFournisseur / 30;
-    const runway = dailyBurn > 0 ? solde / dailyBurn : 999;
+    const todayIso = iso(today);
+    const adsToday = dailyAds[todayIso]?.spend || 0;
+    void weekAgo;
+    void monthAgo;
 
     const objCaPct =
       data.config.objectifCA > 0 ? Math.min((caWeek / data.config.objectifCA) * 100, 100) : 0;
@@ -130,26 +230,31 @@ function Dashboard() {
       caToday,
       caWeek,
       caMonth,
-      caTotal,
-      refundsTotal,
-      feesTotal,
-      netTotal,
-      ordersWithFeeData,
-      totalAds,
-      totalFournisseur,
-      abosMensuel,
-      provisions,
-      benef,
+      totalSales,
+      totalCogs,
+      totalAdsHT,
+      totalAdsTTC,
+      totalTaxes,
+      totalTaxOnSalesRate,
+      taxOnAdSpend,
+      profitBrut,
+      profitNet,
+      profitNetPct,
+      roas,
       solde,
       runway,
       objCaPct,
+      refundsTotal,
+      feesTotal,
+      ordersWithFeeData,
       totalOrders: orders.length,
       ordersToday: today_orders.length,
       ordersWeek: week_orders.length,
       ordersMonth: month_orders.length,
       pendingFulfill,
+      adsToday,
     };
-  }, [orders, data]);
+  }, [orders, data, range]);
 
   if (loading) {
     return <div style={{ color: "var(--text-dim)" }}>Chargement des données Shopify...</div>;
@@ -184,62 +289,63 @@ function Dashboard() {
         <div className="card" style={{ borderColor: "var(--accent)", marginBottom: "1rem", background: "rgba(200, 165, 90, 0.05)" }}>
           <div style={{ fontWeight: 500, marginBottom: "0.25rem" }}>⚙️ Configuration recommandée</div>
           <div style={{ fontSize: "0.85rem", color: "var(--text-dim)" }}>
-            Va dans <a href="/parametres" style={{ color: "var(--accent)" }}>Paramètres</a> pour définir ton solde initial, taux URSSAF/IR, et objectifs CA.
-            Les autres données (commandes, frais, marchés) viennent directement de Shopify.
+            Va dans <a href="/parametres" style={{ color: "var(--accent)" }}>Paramètres</a> pour définir ton solde initial, taux URSSAF/IR, COGS et objectifs.
           </div>
         </div>
       )}
 
-      {/* KPIs */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "1rem", marginBottom: "1.5rem" }}>
+      {/* Top KPIs — aligned with Profit Journalier */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: "1rem", marginBottom: "1.5rem" }}>
         <div className="kpi">
           <div className="kpi-label">Solde actuel</div>
           <div className={`kpi-value ${stats.solde > 0 ? "green" : "red"}`}>
             {fmtMoney(stats.solde, currency)}
           </div>
           <div className="kpi-delta">
-            Bénéfice: <span className={stats.benef >= 0 ? "green" : "red"}>{fmtMoney(stats.benef, currency)}</span>
+            Profit net: <span className={stats.profitNet >= 0 ? "green" : "red"}>{fmtMoney(stats.profitNet, currency)}</span>
           </div>
         </div>
 
         <div className="kpi">
-          <div className="kpi-label">CA Total</div>
-          <div className="kpi-value accent">{fmtMoney(stats.caTotal, currency)}</div>
+          <div className="kpi-label">Total Sales</div>
+          <div className="kpi-value accent">{fmtMoney(stats.totalSales, currency)}</div>
           <div className="kpi-delta">{stats.totalOrders} commandes</div>
         </div>
 
         <div className="kpi">
-          <div className="kpi-label">Net reçu (après frais)</div>
-          <div className="kpi-value blue">{fmtMoney(stats.netTotal, currency)}</div>
-          <div className="kpi-delta">
-            Frais: <span className="red">{fmtMoney(stats.feesTotal, currency)}</span>
+          <div className="kpi-label">COGS</div>
+          <div className="kpi-value orange">{fmtMoney(stats.totalCogs, currency)}</div>
+          <div className="kpi-delta">incl. shipping + gifts</div>
+        </div>
+
+        <div className="kpi">
+          <div className="kpi-label">Meta Ads TTC</div>
+          <div className="kpi-value red">{fmtMoney(stats.totalAdsTTC, currency)}</div>
+          <div className="kpi-delta">HT: {fmtMoney(stats.totalAdsHT, currency)} +{stats.taxOnAdSpend}% TVA</div>
+        </div>
+
+        <div className="kpi">
+          <div className="kpi-label">Taxes</div>
+          <div className="kpi-value" style={{ color: "var(--purple)" }}>
+            {fmtMoney(stats.totalTaxes, currency)}
           </div>
+          <div className="kpi-delta">{stats.totalTaxOnSalesRate.toFixed(2)}% sur Sales</div>
         </div>
 
         <div className="kpi">
-          <div className="kpi-label">CA Aujourd&apos;hui</div>
-          <div className="kpi-value accent">{fmtMoney(stats.caToday, currency)}</div>
-          <div className="kpi-delta">{stats.ordersToday} commande{stats.ordersToday > 1 ? "s" : ""}</div>
-        </div>
-
-        <div className="kpi">
-          <div className="kpi-label">CA 7 jours</div>
-          <div className="kpi-value blue">{fmtMoney(stats.caWeek, currency)}</div>
-          <div className="kpi-delta">{stats.ordersWeek} commandes</div>
-        </div>
-
-        <div className="kpi">
-          <div className="kpi-label">CA 30 jours</div>
-          <div className="kpi-value blue">{fmtMoney(stats.caMonth, currency)}</div>
-          <div className="kpi-delta">{stats.ordersMonth} commandes</div>
-        </div>
-
-        <div className="kpi">
-          <div className="kpi-label">Runway</div>
-          <div className={`kpi-value ${stats.runway < 3 ? "red" : stats.runway < 7 ? "orange" : "green"}`}>
-            {stats.runway > 365 ? "∞" : `${stats.runway.toFixed(0)}j`}
+          <div className="kpi-label">Profit Net</div>
+          <div className={`kpi-value ${stats.profitNet >= 0 ? "green" : "red"}`}>
+            {fmtMoney(stats.profitNet, currency)}
           </div>
-          <div className="kpi-delta">À consommation actuelle</div>
+          <div className="kpi-delta">{stats.profitNetPct.toFixed(1)}%</div>
+        </div>
+
+        <div className="kpi">
+          <div className="kpi-label">ROAS</div>
+          <div className={`kpi-value ${stats.roas > 1.5 ? "green" : stats.roas > 1 ? "orange" : "red"}`}>
+            {stats.roas.toFixed(2)}
+          </div>
+          <div className="kpi-delta">Sales / Ads HT</div>
         </div>
 
         <div className="kpi">
@@ -247,52 +353,50 @@ function Dashboard() {
           <div className={`kpi-value ${stats.pendingFulfill > 0 ? "orange" : "green"}`}>
             {stats.pendingFulfill}
           </div>
-          <div className="kpi-delta">Commandes non fulfilled</div>
+          <div className="kpi-delta">commandes unfulfilled</div>
         </div>
       </div>
 
-      {/* Objectif + Dépenses */}
-      {(data!.config.objectifCA > 0 || stats.totalAds > 0 || stats.abosMensuel > 0) && (
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem", marginBottom: "1.5rem" }}>
-          {data!.config.objectifCA > 0 && (
-            <div className="card">
-              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "0.5rem" }}>
-                <div style={{ fontSize: "0.9rem", fontWeight: 500 }}>Objectif CA / semaine</div>
-                <div className="mono" style={{ fontSize: "0.85rem", color: "var(--text-dim)" }}>
-                  {fmtMoney(stats.caWeek, currency)} / {fmtMoney(data!.config.objectifCA, currency)}
-                </div>
-              </div>
-              <div className="progress">
-                <div className={`progress-fill ${stats.objCaPct >= 100 ? "green" : ""}`} style={{ width: `${stats.objCaPct}%` }} />
-              </div>
-              <div style={{ fontSize: "0.75rem", color: "var(--text-dim)", marginTop: "0.35rem" }}>
-                {stats.objCaPct.toFixed(1)}%
-              </div>
-            </div>
-          )}
+      {/* Secondary KPIs: CA today / 7j / 30j / Runway */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: "1rem", marginBottom: "1.5rem" }}>
+        <div className="kpi">
+          <div className="kpi-label">CA Aujourd&apos;hui</div>
+          <div className="kpi-value accent">{fmtMoney(stats.caToday, currency)}</div>
+          <div className="kpi-delta">{stats.ordersToday} commande{stats.ordersToday > 1 ? "s" : ""} · Ads: {fmtMoney(stats.adsToday, currency)}</div>
+        </div>
+        <div className="kpi">
+          <div className="kpi-label">CA 7 jours</div>
+          <div className="kpi-value blue">{fmtMoney(stats.caWeek, currency)}</div>
+          <div className="kpi-delta">{stats.ordersWeek} commandes</div>
+        </div>
+        <div className="kpi">
+          <div className="kpi-label">CA 30 jours</div>
+          <div className="kpi-value blue">{fmtMoney(stats.caMonth, currency)}</div>
+          <div className="kpi-delta">{stats.ordersMonth} commandes</div>
+        </div>
+        <div className="kpi">
+          <div className="kpi-label">Runway</div>
+          <div className={`kpi-value ${stats.runway < 3 ? "red" : stats.runway < 7 ? "orange" : "green"}`}>
+            {stats.runway > 365 ? "∞" : `${stats.runway.toFixed(0)}j`}
+          </div>
+          <div className="kpi-delta">Solde ÷ (ads + COGS / jour)</div>
+        </div>
+      </div>
 
-          <div className="card">
-            <div style={{ fontSize: "0.9rem", fontWeight: 500, marginBottom: "0.5rem" }}>
-              Dépenses (saisies dans Trésorerie)
+      {/* Objectif CA / semaine progress bar */}
+      {data!.config.objectifCA > 0 && (
+        <div className="card" style={{ marginBottom: "1.5rem" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "0.5rem" }}>
+            <div style={{ fontSize: "0.9rem", fontWeight: 500 }}>Objectif CA / semaine</div>
+            <div className="mono" style={{ fontSize: "0.85rem", color: "var(--text-dim)" }}>
+              {fmtMoney(stats.caWeek, currency)} / {fmtMoney(data!.config.objectifCA, currency)}
             </div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.5rem", fontSize: "0.85rem" }}>
-              <div>
-                <div style={{ color: "var(--text-dim)" }}>Ads</div>
-                <div className="mono red">{fmtMoney(stats.totalAds, currency)}</div>
-              </div>
-              <div>
-                <div style={{ color: "var(--text-dim)" }}>Fournisseur</div>
-                <div className="mono orange">{fmtMoney(stats.totalFournisseur, currency)}</div>
-              </div>
-              <div>
-                <div style={{ color: "var(--text-dim)" }}>Abonnements /mois</div>
-                <div className="mono">{fmtMoney(stats.abosMensuel, currency)}</div>
-              </div>
-              <div>
-                <div style={{ color: "var(--text-dim)" }}>Provisions URSSAF+IR</div>
-                <div className="mono accent">{fmtMoney(stats.provisions, currency)}</div>
-              </div>
-            </div>
+          </div>
+          <div className="progress">
+            <div className={`progress-fill ${stats.objCaPct >= 100 ? "green" : ""}`} style={{ width: `${stats.objCaPct}%` }} />
+          </div>
+          <div style={{ fontSize: "0.75rem", color: "var(--text-dim)", marginTop: "0.35rem" }}>
+            {stats.objCaPct.toFixed(1)}%
           </div>
         </div>
       )}
@@ -350,7 +454,7 @@ function Dashboard() {
       </div>
 
       <div style={{ marginTop: "2rem", fontSize: "0.8rem", color: "var(--text-faint)", textAlign: "center" }}>
-        EcomOS · Données 100% Shopify en temps réel
+        EcomOS · Données 100% Shopify en temps réel · Même calcul que Profit Journalier
       </div>
     </div>
   );
