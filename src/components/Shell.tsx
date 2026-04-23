@@ -113,12 +113,46 @@ export default function Shell({ children }: { children: React.ReactNode }) {
 
 function ConnectScreen() {
   const [shop, setShop] = useState("");
+  const [autoRedirecting, setAutoRedirecting] = useState(false);
+
+  // When embedded in Shopify admin, Shopify passes ?shop=X — auto-start OAuth
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    const shopParam = params.get("shop");
+    if (shopParam && /^[a-z0-9][a-z0-9-]*\.myshopify\.com$/.test(shopParam)) {
+      setAutoRedirecting(true);
+      // Break out of Shopify iframe if we're inside one (OAuth can't happen in iframe)
+      const redirectUrl = `/api/auth?shop=${encodeURIComponent(shopParam)}`;
+      if (window.top && window.top !== window.self) {
+        // Inside iframe — redirect the top frame
+        window.top.location.href = `${window.location.origin}${redirectUrl}`;
+      } else {
+        window.location.href = redirectUrl;
+      }
+    }
+  }, []);
 
   const install = () => {
     const domain = shop.trim().toLowerCase().replace(/^https?:\/\//, "").replace(/\/.*$/, "");
     const full = domain.includes(".myshopify.com") ? domain : `${domain}.myshopify.com`;
     window.location.href = `/api/auth?shop=${encodeURIComponent(full)}`;
   };
+
+  if (autoRedirecting) {
+    return (
+      <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <div className="card" style={{ maxWidth: 400, textAlign: "center" }}>
+          <div style={{ color: "var(--accent)", fontSize: "1.2rem", fontWeight: 600, marginBottom: "0.5rem" }}>
+            Connexion à Shopify…
+          </div>
+          <div style={{ color: "var(--text-dim)", fontSize: "0.9rem" }}>
+            Redirection vers l&apos;autorisation OAuth
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", padding: "2rem" }}>
