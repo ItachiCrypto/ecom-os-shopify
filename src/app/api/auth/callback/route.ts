@@ -14,8 +14,8 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "Missing required OAuth params" }, { status: 400 });
   }
 
-  // Verify HMAC
-  if (!verifyHmac(query)) {
+  // Verify HMAC using the app credentials mapped to this shop
+  if (!verifyHmac(shop, query)) {
     return NextResponse.json({ error: "HMAC verification failed" }, { status: 401 });
   }
 
