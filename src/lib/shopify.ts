@@ -77,7 +77,7 @@ const ORDERS_QUERY = `
               rateName
             }
           }
-          lineItems(first: 20) {
+          lineItems(first: 50) {
             edges {
               node {
                 title
@@ -90,6 +90,8 @@ const ORDERS_QUERY = `
                   product { id title }
                 }
                 originalTotalSet { shopMoney { amount currencyCode } }
+                discountedTotalSet { shopMoney { amount currencyCode } }
+                customAttributes { key value }
               }
             }
           }

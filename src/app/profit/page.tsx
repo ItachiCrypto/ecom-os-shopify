@@ -20,6 +20,8 @@ interface LineItem {
   quantity: number;
   variant: Variant | null;
   originalTotalSet: Money;
+  discountedTotalSet: Money;
+  customAttributes: { key: string; value: string }[];
 }
 interface Order {
   id: string;
@@ -142,12 +144,17 @@ function Profit() {
         if (!pc || !pc.active) continue;
 
         day.qtyByVariant[variantId] = (day.qtyByVariant[variantId] || 0) + li.quantity;
-        day.sales += parseFloat(li.originalTotalSet.shopMoney.amount);
+        // Use discounted total (after Moon Bundles discounts) — a $0 gift doesn't inflate sales
+        day.sales += parseFloat(li.discountedTotalSet.shopMoney.amount);
+        // COGS still counts the real cost of the item (even if sold at $0 as a gift)
         day.cogs += li.quantity * pc.cogs;
 
         // Add bundle extras: e.g. "every ring sold → +1 free lube's cost"
+        // (Only applies if user manually configured a bundle — Moon Bundles gifts are auto-handled
+        // via their own line items with __moonbundle marker, so no extra needed)
         const bundleExtra = bundleExtraCogsPerTrigger[variantId] || 0;
-        if (bundleExtra > 0) {
+        const isMoonBundleLine = (li.customAttributes || []).some((a) => a.key === "__moonbundle");
+        if (bundleExtra > 0 && !isMoonBundleLine) {
           day.cogs += li.quantity * bundleExtra;
         }
       }
