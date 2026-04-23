@@ -81,3 +81,25 @@ export async function getAccessToken(shop: string): Promise<string | null> {
   const data = await getShopData(shop);
   return data?.accessToken || null;
 }
+
+/**
+ * List all shops that have been installed (i.e. have data in the Blob store).
+ * Returns shop domains like ["56aqy8-pd.myshopify.com", "w6daqz-3k.myshopify.com"].
+ */
+export async function listInstalledShops(): Promise<string[]> {
+  const token = getBlobToken();
+  if (!token) return [];
+  try {
+    const { blobs } = await list({ prefix: "shops/", token });
+    return blobs
+      .map((b) => {
+        // Pathname looks like "shops/<slug>.json"
+        const match = b.pathname.match(/^shops\/(.+)\.json$/);
+        return match ? `${match[1]}.myshopify.com` : null;
+      })
+      .filter((s): s is string => s !== null);
+  } catch (e) {
+    console.error("[storage] listInstalledShops error:", e);
+    return [];
+  }
+}

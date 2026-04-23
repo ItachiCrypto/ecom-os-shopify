@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import { DateRangeProvider } from "./DateRangeContext";
 import DateRangePicker from "./DateRangePicker";
+import ShopSwitcher from "./ShopSwitcher";
 
 const NAV = [
   { href: "/", label: "Dashboard", icon: "📊" },
@@ -75,17 +76,9 @@ export default function Shell({ children }: { children: React.ReactNode }) {
           overflowY: "auto",
         }}
       >
-        <div style={{ padding: "0 0.75rem 1rem", borderBottom: "1px solid var(--border)", marginBottom: "0.75rem" }}>
-          <div style={{ color: "var(--accent)", fontWeight: 700, fontSize: "1.15rem" }}>EcomOS</div>
-          {shop ? (
-            <div style={{ fontSize: "0.75rem", color: "var(--text-dim)", marginTop: "0.25rem" }}>
-              {shop.name}
-            </div>
-          ) : connected === null ? (
-            <div style={{ fontSize: "0.75rem", color: "var(--text-faint)", marginTop: "0.25rem" }}>
-              Chargement...
-            </div>
-          ) : null}
+        <div style={{ padding: "0 0.25rem 1rem", borderBottom: "1px solid var(--border)", marginBottom: "0.75rem" }}>
+          <div style={{ color: "var(--accent)", fontWeight: 700, fontSize: "1.15rem", padding: "0 0.5rem", marginBottom: "0.6rem" }}>EcomOS</div>
+          <ShopSwitcher currentShopName={shop?.name} />
         </div>
         {NAV.map((item) => (
           <Link
