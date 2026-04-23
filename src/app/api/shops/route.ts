@@ -1,13 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { listInstalledShops, getShopData } from "@/lib/storage";
 import { getShopInfo } from "@/lib/shopify";
-import { SHOP_COOKIE } from "@/lib/config";
+import { SHOP_COOKIE, ALL_SHOPS } from "@/lib/config";
 
 export async function GET(request: NextRequest) {
   const activeShop = request.cookies.get(SHOP_COOKIE)?.value;
   const shops = await listInstalledShops();
 
-  // Enrich with display name from Shopify (cached via getShopInfo if fast)
+  // Enrich with display name from Shopify
   const enriched = await Promise.all(
     shops.map(async (shop) => {
       let name = shop.replace(".myshopify.com", "");
@@ -25,5 +25,19 @@ export async function GET(request: NextRequest) {
     })
   );
 
-  return NextResponse.json({ shops: enriched, activeShop });
+  // Include "all shops" pseudo-entry if more than 1 shop
+  const withAll =
+    shops.length > 1
+      ? [
+          {
+            shop: ALL_SHOPS,
+            name: "Toutes les boutiques",
+            currencyCode: undefined,
+            active: activeShop === ALL_SHOPS,
+          },
+          ...enriched,
+        ]
+      : enriched;
+
+  return NextResponse.json({ shops: withAll, activeShop });
 }

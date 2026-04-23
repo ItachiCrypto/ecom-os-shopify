@@ -1,12 +1,52 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getShopData, saveShopData } from "@/lib/storage";
-import { SHOP_COOKIE } from "@/lib/config";
+import {
+  getShopData,
+  saveShopData,
+  listInstalledShops,
+  mirrorConfigToAllShops,
+} from "@/lib/storage";
+import { SHOP_COOKIE, ALL_SHOPS, MASTER_SHOP, SHARED_CONFIG_FIELDS } from "@/lib/config";
 import type { ShopData } from "@/lib/types";
 
 export async function GET(request: NextRequest) {
   const shop = request.cookies.get(SHOP_COOKIE)?.value;
   if (!shop) {
     return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
+  }
+
+  // ALL mode — aggregate: config from master shop, dailyAds merged from all shops
+  if (shop === ALL_SHOPS) {
+    const all = await listInstalledShops();
+    const master = await getShopData(MASTER_SHOP);
+    if (!master) {
+      return NextResponse.json(
+        { error: `Master shop ${MASTER_SHOP} not installed` },
+        { status: 404 }
+      );
+    }
+    // Merge dailyAds from all shops (sum spend per date)
+    const mergedDailyAds: Record<string, { spend: number; notes?: string }> = {};
+    for (const s of all) {
+      const data = await getShopData(s);
+      const entries = data?.config?.dailyAds || {};
+      for (const [date, entry] of Object.entries(entries)) {
+        mergedDailyAds[date] = {
+          spend: (mergedDailyAds[date]?.spend || 0) + (entry.spend || 0),
+          notes:
+            mergedDailyAds[date]?.notes && entry.notes
+              ? `${mergedDailyAds[date]?.notes} | ${entry.notes}`
+              : mergedDailyAds[date]?.notes || entry.notes,
+        };
+      }
+    }
+    const aggregated: ShopData = {
+      ...master,
+      shop: ALL_SHOPS,
+      config: { ...master.config, dailyAds: mergedDailyAds },
+    };
+    const { accessToken: _t, ...safe } = aggregated;
+    void _t;
+    return NextResponse.json({ data: safe, mode: "all" });
   }
 
   const data = await getShopData(shop);
@@ -26,7 +66,10 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
   }
 
-  const existing = await getShopData(shop);
+  // In ALL mode, writes target the master shop + mirror shared fields to all
+  const targetShop = shop === ALL_SHOPS ? MASTER_SHOP : shop;
+
+  const existing = await getShopData(targetShop);
   if (!existing) {
     return NextResponse.json({ error: "Shop data not found" }, { status: 404 });
   }
@@ -53,5 +96,21 @@ export async function POST(request: NextRequest) {
   };
 
   await saveShopData(merged);
-  return NextResponse.json({ ok: true });
+
+  // Mirror shared config fields to all other installed shops (keeps settings in sync)
+  let mirrored: string[] = [];
+  if (body.config) {
+    const shared: Record<string, unknown> = {};
+    const cfg = body.config as unknown as Record<string, unknown>;
+    for (const key of SHARED_CONFIG_FIELDS) {
+      const value = cfg[key];
+      if (value !== undefined) shared[key] = value;
+    }
+    if (Object.keys(shared).length > 0) {
+      const result = await mirrorConfigToAllShops(targetShop, shared);
+      mirrored = result.mirrored;
+    }
+  }
+
+  return NextResponse.json({ ok: true, mirroredTo: mirrored });
 }

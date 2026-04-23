@@ -112,6 +112,52 @@ export default function ShopSwitcher({ currentShopName }: { currentShopName?: st
           {shops?.length === 0 && (
             <div style={{ padding: "0.5rem", fontSize: "0.8rem", color: "var(--text-faint)" }}>Aucune boutique</div>
           )}
+          {shops && shops.length > 1 && (
+            <button
+              onClick={() => !shops.find((s) => s.shop === "__all__")?.active && switchTo("__all__")}
+              disabled={switching === "__all__"}
+              style={{
+                width: "100%",
+                textAlign: "left",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: "0.5rem",
+                padding: "0.5rem 0.6rem",
+                background: shops.find((s) => s.shop === "__all__")?.active
+                  ? "var(--bg-elevated)"
+                  : "transparent",
+                border: "none",
+                borderRadius: 6,
+                color: shops.find((s) => s.shop === "__all__")?.active
+                  ? "var(--accent)"
+                  : "var(--text)",
+                cursor: "pointer",
+                fontFamily: "inherit",
+                fontSize: "0.85rem",
+                borderBottom: "1px solid var(--border)",
+                marginBottom: "0.25rem",
+              }}
+              onMouseEnter={(e) => {
+                if (!shops.find((s) => s.shop === "__all__")?.active)
+                  e.currentTarget.style.background = "var(--bg-elevated)";
+              }}
+              onMouseLeave={(e) => {
+                if (!shops.find((s) => s.shop === "__all__")?.active)
+                  e.currentTarget.style.background = "transparent";
+              }}
+            >
+              <div style={{ display: "flex", flexDirection: "column", overflow: "hidden" }}>
+                <span style={{ fontWeight: 600 }}>🌐 Toutes les boutiques</span>
+                <span style={{ fontSize: "0.7rem", color: "var(--text-dim)" }}>
+                  {shops.length} boutiques agrégées
+                </span>
+              </div>
+              {shops.find((s) => s.shop === "__all__")?.active && (
+                <span style={{ fontSize: "0.7rem", color: "var(--green)" }}>● ACTIVE</span>
+              )}
+            </button>
+          )}
           {shops?.map((s) => (
             <button
               key={s.shop}

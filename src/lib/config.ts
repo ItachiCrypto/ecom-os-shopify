@@ -78,3 +78,29 @@ export const SHOPIFY_SCOPES = [
 
 // Cookie used to track the active shop in the admin UI
 export const SHOP_COOKIE = "ecomos_shop";
+
+// Special value of the shop cookie meaning "aggregate data from all installed shops"
+export const ALL_SHOPS = "__all__";
+
+// Master shop — its config is treated as the source of truth for shared settings.
+// When the user views "All shops" or switches to another shop, tax/objective/shipping
+// settings come from the master. Each shop keeps its own accessToken, dailyAds and productCosts.
+export const MASTER_SHOP = process.env.MASTER_SHOP || "56aqy8-pd.myshopify.com";
+
+// Fields that are shared/mirrored across all shops on save
+export const SHARED_CONFIG_FIELDS = [
+  "shopifyPct",
+  "shopifyFixe",
+  "urssaf",
+  "ir",
+  "tva",
+  "soldeInitial",
+  "objectifCA",
+  "objectifProfit",
+  "alerteRunway",
+  "alerteLivraison",
+  "shopStartDate",
+  "taxOnAdSpend",
+  "shippingCostByQty",
+  "bundles",
+] as const;

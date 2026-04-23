@@ -83,6 +83,28 @@ export async function getAccessToken(shop: string): Promise<string | null> {
 }
 
 /**
+ * Mirror a subset of config fields from one shop to all other installed shops.
+ * Shop-specific fields (accessToken, dailyAds, productCosts) are left alone.
+ * Used to keep global settings (taxes, objectives, shipping brackets) in sync.
+ */
+export async function mirrorConfigToAllShops(
+  sourceShop: string,
+  partial: Record<string, unknown>
+): Promise<{ mirrored: string[] }> {
+  const all = await listInstalledShops();
+  const others = all.filter((s) => s !== sourceShop);
+  const mirrored: string[] = [];
+  for (const shop of others) {
+    const existing = await getShopData(shop);
+    if (!existing) continue;
+    existing.config = { ...existing.config, ...partial } as typeof existing.config;
+    await saveShopData(existing);
+    mirrored.push(shop);
+  }
+  return { mirrored };
+}
+
+/**
  * List all shops that have been installed (i.e. have data in the Blob store).
  * Returns shop domains like ["56aqy8-pd.myshopify.com", "w6daqz-3k.myshopify.com"].
  */
