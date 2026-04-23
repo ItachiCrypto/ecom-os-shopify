@@ -10,13 +10,7 @@ import ShopSwitcher from "./ShopSwitcher";
 const NAV = [
   { href: "/", label: "Dashboard", icon: "📊" },
   { href: "/profit", label: "Profit Journalier", icon: "💹" },
-  { href: "/commandes", label: "Commandes", icon: "📦" },
   { href: "/roas", label: "ROAS Calculator", icon: "🎯" },
-  { href: "/testings", label: "Testings", icon: "🧪" },
-  { href: "/tresorerie", label: "Trésorerie", icon: "💰" },
-  { href: "/fournisseur", label: "Fournisseur", icon: "🚚" },
-  { href: "/analytics", label: "Analytics", icon: "📈" },
-  { href: "/journal", label: "Journal", icon: "📝" },
   { href: "/parametres", label: "Paramètres", icon: "⚙️" },
 ];
 
@@ -112,7 +106,7 @@ export default function Shell({ children }: { children: React.ReactNode }) {
 
 function TopBar({ pathname }: { pathname: string }) {
   // Hide date picker on pages that don't use date filtering
-  const hiddenOn = ["/parametres", "/journal", "/roas", "/testings"];
+  const hiddenOn = ["/parametres", "/roas"];
   if (hiddenOn.includes(pathname)) return null;
   return (
     <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: "1rem" }}>

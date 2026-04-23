@@ -301,9 +301,6 @@ function Dashboard() {
       <div className="card">
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem" }}>
           <div style={{ fontSize: "1.05rem", fontWeight: 600 }}>Commandes récentes</div>
-          <a href="/commandes" style={{ fontSize: "0.85rem", color: "var(--accent)" }}>
-            Voir toutes →
-          </a>
         </div>
         <div style={{ overflowX: "auto" }}>
           <table className="table">
