@@ -136,7 +136,19 @@ function ConnectScreen() {
   const install = () => {
     const domain = shop.trim().toLowerCase().replace(/^https?:\/\//, "").replace(/\/.*$/, "");
     const full = domain.includes(".myshopify.com") ? domain : `${domain}.myshopify.com`;
-    window.location.href = `/api/auth?shop=${encodeURIComponent(full)}`;
+    const redirectUrl = `/api/auth?shop=${encodeURIComponent(full)}`;
+    // Break out of iframe if needed (Shopify refuses to load OAuth in iframe)
+    if (typeof window !== "undefined" && window.top && window.top !== window.self) {
+      try {
+        window.top.location.href = `${window.location.origin}${redirectUrl}`;
+        return;
+      } catch {
+        // Cross-origin — fallback to opening in new tab
+        window.open(`${window.location.origin}${redirectUrl}`, "_top");
+        return;
+      }
+    }
+    window.location.href = redirectUrl;
   };
 
   if (autoRedirecting) {
