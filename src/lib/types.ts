@@ -58,6 +58,9 @@ export interface EcomConfig {
   objectifProfit: number;
   alerteRunway: number;
   alerteLivraison: Record<string, number>;
+  // Date when this store "started" (new product, new phase, etc).
+  // Used as default for date filters. ISO string (YYYY-MM-DD).
+  shopStartDate?: string;
 }
 
 export interface Testing {

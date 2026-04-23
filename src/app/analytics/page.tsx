@@ -3,6 +3,8 @@
 import { useEffect, useMemo, useState } from "react";
 import Shell from "@/components/Shell";
 import { formatCurrency, formatPct } from "@/lib/format";
+import { useDateRangeCtx } from "@/components/DateRangeContext";
+import { inRange } from "@/hooks/useDateRange";
 
 interface Money { shopMoney: { amount: string; currencyCode: string } }
 interface Order {
@@ -20,15 +22,22 @@ export default function AnalyticsPage() {
 }
 
 function Analytics() {
-  const [orders, setOrders] = useState<Order[] | null>(null);
+  const [allOrders, setAllOrders] = useState<Order[] | null>(null);
   const [currency, setCurrency] = useState("EUR");
+  const { range } = useDateRangeCtx();
 
   useEffect(() => {
     fetch("/api/orders?all=true").then(r => r.json()).then(j => {
-      setOrders(j.orders);
+      setAllOrders(j.orders);
       if (j.orders?.[0]?.currentTotalPriceSet?.shopMoney?.currencyCode) setCurrency(j.orders[0].currentTotalPriceSet.shopMoney.currencyCode);
     });
   }, []);
+
+  // Filter by active date range
+  const orders = useMemo(() => {
+    if (!allOrders) return null;
+    return allOrders.filter((o) => inRange(o.createdAt, range));
+  }, [allOrders, range]);
 
   const byCountry = useMemo(() => {
     if (!orders) return [];
@@ -79,7 +88,12 @@ function Analytics() {
 
   return (
     <div>
-      <h1 style={{ fontSize: "1.75rem", fontWeight: 600, margin: 0, marginBottom: "1.5rem" }}>Analytics</h1>
+      <div style={{ marginBottom: "1.5rem" }}>
+        <h1 style={{ fontSize: "1.75rem", fontWeight: 600, margin: 0 }}>Analytics</h1>
+        <div style={{ color: "var(--text-dim)", fontSize: "0.875rem", marginTop: "0.25rem" }}>
+          Période <span className="accent">{range.label}</span> · {orders.length} commandes
+        </div>
+      </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem" }}>
         <div className="card">

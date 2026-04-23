@@ -87,6 +87,36 @@ function Parametres() {
         </div>
       )}
 
+      <div className="card" style={{ marginBottom: "1rem", borderColor: "var(--accent-dim)" }}>
+        <div style={{ fontSize: "1.05rem", fontWeight: 600, marginBottom: "0.25rem" }}>
+          📅 Période de la boutique
+        </div>
+        <div style={{ fontSize: "0.8rem", color: "var(--text-dim)", marginBottom: "0.75rem", lineHeight: 1.5 }}>
+          Indique la date à partir de laquelle tu comptes le début de ta boutique (ou d&apos;une nouvelle phase).
+          Tous les calculs (solde, CA, profit) se feront à partir de cette date quand tu sélectionnes <b>&quot;Depuis début boutique&quot;</b> dans le filtre en haut.
+          Pratique pour isoler des périodes — par ex. un produit lancé en décembre vs un autre en avril.
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
+          <input
+            className="input"
+            type="date"
+            value={config.shopStartDate || ""}
+            onChange={e => set({ shopStartDate: e.target.value || undefined })}
+            style={{ maxWidth: 200 }}
+          />
+          {config.shopStartDate && (
+            <button className="btn" onClick={() => set({ shopStartDate: undefined })}>
+              ✕ Effacer
+            </button>
+          )}
+          <span style={{ fontSize: "0.8rem", color: "var(--text-dim)" }}>
+            {config.shopStartDate
+              ? `Début: ${new Date(config.shopStartDate + "T12:00:00").toLocaleDateString("fr-FR", { day: "2-digit", month: "long", year: "numeric" })}`
+              : "Aucune date définie — utilise les presets classiques"}
+          </span>
+        </div>
+      </div>
+
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem" }}>
         <div className="card">
           <div style={{ fontSize: "1.05rem", fontWeight: 600, marginBottom: "0.25rem" }}>Fiscalité (France)</div>

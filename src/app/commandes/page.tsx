@@ -5,6 +5,8 @@ import Shell from "@/components/Shell";
 import { fmtMoney, getRealFees, hasRealFeeData } from "@/lib/order-utils";
 import type { Transaction } from "@/lib/order-utils";
 import { formatDateTime } from "@/lib/format";
+import { useDateRangeCtx } from "@/components/DateRangeContext";
+import { inRange } from "@/hooks/useDateRange";
 
 interface Money { shopMoney: { amount: string; currencyCode: string } }
 interface Order {
@@ -64,9 +66,12 @@ function Commandes() {
     load();
   }, []);
 
+  const { range } = useDateRangeCtx();
+
   const filtered = useMemo(() => {
     if (!orders) return [];
     return orders.filter((o) => {
+      if (!inRange(o.createdAt, range)) return false;
       const searchStr =
         o.name + " " +
         (o.customer?.firstName || "") + " " +
@@ -76,7 +81,7 @@ function Commandes() {
       if (country && o.shippingAddress?.countryCodeV2 !== country) return false;
       return true;
     });
-  }, [orders, filter, country]);
+  }, [orders, filter, country, range]);
 
   const countries = useMemo(() => {
     if (!orders) return [];
@@ -105,7 +110,7 @@ function Commandes() {
       <div style={{ marginBottom: "1.5rem" }}>
         <h1 style={{ fontSize: "1.75rem", fontWeight: 600, margin: 0 }}>Commandes</h1>
         <div style={{ color: "var(--text-dim)", fontSize: "0.875rem", marginTop: "0.25rem" }}>
-          {filtered.length} commandes · {totals.withFeeData} avec vrais frais Shopify{country ? ` · Pays: ${country}` : ""}
+          Période <span className="accent">{range.label}</span> · {filtered.length} commandes · {totals.withFeeData} avec vrais frais Shopify{country ? ` · Pays: ${country}` : ""}
         </div>
       </div>
 

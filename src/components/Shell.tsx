@@ -3,6 +3,8 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
+import { DateRangeProvider } from "./DateRangeContext";
+import DateRangePicker from "./DateRangePicker";
 
 const NAV = [
   { href: "/", label: "Dashboard", icon: "📊" },
@@ -105,8 +107,22 @@ export default function Shell({ children }: { children: React.ReactNode }) {
         )}
       </aside>
       <main style={{ flex: 1, padding: "1.5rem 2rem", overflowX: "auto" }}>
-        {children}
+        <DateRangeProvider>
+          <TopBar pathname={pathname} />
+          {children}
+        </DateRangeProvider>
       </main>
+    </div>
+  );
+}
+
+function TopBar({ pathname }: { pathname: string }) {
+  // Hide date picker on pages that don't use date filtering
+  const hiddenOn = ["/parametres", "/journal", "/roas", "/testings"];
+  if (hiddenOn.includes(pathname)) return null;
+  return (
+    <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: "1rem" }}>
+      <DateRangePicker />
     </div>
   );
 }

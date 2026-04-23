@@ -4,6 +4,8 @@ import { useEffect, useMemo, useState } from "react";
 import Shell from "@/components/Shell";
 import { fmtMoney, getRealFees, hasRealFeeData } from "@/lib/order-utils";
 import type { Transaction } from "@/lib/order-utils";
+import { useDateRangeCtx } from "@/components/DateRangeContext";
+import { inRange } from "@/hooks/useDateRange";
 
 interface OrderMoney { shopMoney: { amount: string; currencyCode: string } }
 interface Order {
@@ -41,11 +43,18 @@ export default function DashboardPage() {
 }
 
 function Dashboard() {
-  const [orders, setOrders] = useState<Order[] | null>(null);
+  const [allOrders, setAllOrders] = useState<Order[] | null>(null);
   const [data, setData] = useState<ShopData | null>(null);
   const [currency, setCurrency] = useState("USD");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const { range } = useDateRangeCtx();
+
+  // Filter orders by active date range
+  const orders = useMemo(() => {
+    if (!allOrders) return null;
+    return allOrders.filter((o) => inRange(o.createdAt, range));
+  }, [allOrders, range]);
 
   useEffect(() => {
     const load = async () => {
@@ -59,7 +68,7 @@ function Dashboard() {
         if (!dRes.ok) throw new Error((await dRes.json()).error || "data failed");
         const oJson = await oRes.json();
         const dJson = await dRes.json();
-        setOrders(oJson.orders);
+        setAllOrders(oJson.orders);
         setData(dJson.data);
         if (sRes.ok) {
           const sJson = await sRes.json();
@@ -85,6 +94,8 @@ function Dashboard() {
     const refund = (o: Order) => parseFloat(o.totalRefundedSet.shopMoney.amount);
     const realFee = (o: Order) => getRealFees(o);
 
+    // "Today/Week/Month" are relative to TODAY, independent of the active range filter
+    // (they show intra-period info within whatever the user has filtered)
     const today_orders = orders.filter((o) => new Date(o.createdAt) >= today);
     const week_orders = orders.filter((o) => new Date(o.createdAt) >= weekAgo);
     const month_orders = orders.filter((o) => new Date(o.createdAt) >= monthAgo);
@@ -161,7 +172,7 @@ function Dashboard() {
         <div>
           <h1 style={{ fontSize: "1.75rem", fontWeight: 600, margin: 0 }}>Dashboard</h1>
           <div style={{ color: "var(--text-dim)", fontSize: "0.875rem", marginTop: "0.25rem" }}>
-            {stats.totalOrders} commandes Shopify · {currency}
+            Période <span className="accent">{range.label}</span> · {stats.totalOrders} commandes · {currency}
             {stats.ordersWithFeeData > 0 && (
               <> · <span style={{ color: "var(--green)" }}>{stats.ordersWithFeeData} avec vrais frais Shopify</span></>
             )}
