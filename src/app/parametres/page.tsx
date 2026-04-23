@@ -177,6 +177,11 @@ function Parametres() {
           onChange={(bundles) => set({ bundles })}
         />
 
+        <ShippingCostsSection
+          config={config}
+          onChange={(shippingCostByQty) => set({ shippingCostByQty })}
+        />
+
         <div className="card" style={{ gridColumn: "1 / -1" }}>
           <div style={{ fontSize: "1.05rem", fontWeight: 600, marginBottom: "0.25rem" }}>
             🌍 Marchés Shopify ({markets.length})
@@ -597,6 +602,87 @@ function BundlesSection({
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+// -----------------------------------------------------------------------------
+// Shipping Costs Section — costs per bracket of quantity (1, 3, 5, 10 items)
+// -----------------------------------------------------------------------------
+
+const DEFAULT_BRACKETS = [1, 3, 5, 10];
+
+function ShippingCostsSection({
+  config,
+  onChange,
+}: {
+  config: EcomConfig;
+  onChange: (shippingCostByQty: Record<string, number>) => void;
+}) {
+  const costs = config.shippingCostByQty || {};
+
+  const updateBracket = (qty: number, value: number) => {
+    const next = { ...costs };
+    if (!value) delete next[String(qty)];
+    else next[String(qty)] = value;
+    onChange(next);
+  };
+
+  return (
+    <div className="card" style={{ gridColumn: "1 / -1" }}>
+      <div style={{ marginBottom: "0.5rem" }}>
+        <div style={{ fontSize: "1.05rem", fontWeight: 600 }}>🚚 Coûts de shipping par palier</div>
+        <div style={{ fontSize: "0.8rem", color: "var(--text-dim)", marginTop: "0.25rem", lineHeight: 1.5 }}>
+          Saisis le coût de livraison que tu paies pour une commande selon le nombre total d&apos;items.
+          Pour une commande avec N items, on utilise le <b>plus petit palier ≥ N</b> (ex: 2 items →
+          tarif du palier 3, 4 items → tarif du palier 5). Si N dépasse le plus grand palier, on utilise
+          le plus grand.
+          <br />
+          Le coût est ajouté automatiquement au <b>COGS</b> de chaque commande dans la page Profit.
+        </div>
+      </div>
+
+      <table className="table">
+        <thead>
+          <tr>
+            <th>Nombre d&apos;items</th>
+            <th style={{ textAlign: "right" }}>Coût shipping</th>
+            <th style={{ fontWeight: 400, color: "var(--text-faint)", fontSize: "0.75rem" }}>
+              S&apos;applique aux commandes de…
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          {DEFAULT_BRACKETS.map((bracket, i) => {
+            const prev = i > 0 ? DEFAULT_BRACKETS[i - 1] : 0;
+            const rangeLabel =
+              bracket === 1
+                ? "1 item"
+                : bracket === 10
+                ? `${prev + 1} à 10+ items`
+                : `${prev + 1} à ${bracket} items`;
+            return (
+              <tr key={bracket}>
+                <td style={{ fontWeight: 500 }}>
+                  {bracket} item{bracket > 1 ? "s" : ""}
+                </td>
+                <td style={{ textAlign: "right" }}>
+                  <input
+                    className="input mono"
+                    type="number"
+                    step="0.01"
+                    value={costs[String(bracket)] ?? ""}
+                    onChange={(e) => updateBracket(bracket, parseFloat(e.target.value) || 0)}
+                    placeholder="0.00"
+                    style={{ maxWidth: 110, textAlign: "right", marginLeft: "auto" }}
+                  />
+                </td>
+                <td style={{ fontSize: "0.8rem", color: "var(--text-dim)" }}>{rangeLabel}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
     </div>
   );
 }

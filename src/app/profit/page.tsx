@@ -43,6 +43,7 @@ interface ShopData {
     productCosts?: Record<string, ProductCost>;
     bundles?: Bundle[];
     dailyAds?: Record<string, { spend: number; notes?: string }>;
+    shippingCostByQty?: Record<string, number>;
   };
 }
 
@@ -97,6 +98,21 @@ function Profit() {
     const tva = data.config.tva || 0;
     const totalTaxRate = urssaf + ir + tva; // Total % taxes applied on sales
 
+    // Shipping cost brackets: { "1": 3.5, "3": 5, ... }
+    // For an order of N items, use SMALLEST bracket where N <= bracket.
+    const shippingBrackets = Object.entries(data.config.shippingCostByQty || {})
+      .map(([k, v]) => ({ qty: Number(k), cost: v }))
+      .filter((b) => b.qty > 0 && b.cost > 0)
+      .sort((a, b) => a.qty - b.qty);
+    const getShippingCost = (orderQty: number): number => {
+      if (shippingBrackets.length === 0 || orderQty <= 0) return 0;
+      for (const b of shippingBrackets) {
+        if (orderQty <= b.qty) return b.cost;
+      }
+      // qty exceeds the largest bracket → use largest bracket cost
+      return shippingBrackets[shippingBrackets.length - 1].cost;
+    };
+
     // Pre-compute bundle COGS per trigger variant (sum across bundles)
     const bundleExtraCogsPerTrigger: Record<string, number> = {};
     for (const b of bundles) {
@@ -146,7 +162,12 @@ function Profit() {
       // Already accounts for discounts, bundle gifts priced at $0, etc.
       day.sales += parseFloat(o.currentTotalPriceSet.shopMoney.amount);
 
+      // Total items in this order (used for shipping bracket)
+      let orderTotalQty = 0;
+
       for (const { node: li } of o.lineItems.edges) {
+        orderTotalQty += li.quantity;
+
         const variantId = li.variant?.id;
         if (!variantId) continue;
         const pc = productCosts[variantId];
@@ -164,6 +185,9 @@ function Profit() {
           day.cogs += li.quantity * bundleExtra;
         }
       }
+
+      // Add shipping cost for this order (bracket based on total quantity)
+      day.cogs += getShippingCost(orderTotalQty);
     }
 
     // Build rows
@@ -463,7 +487,7 @@ function Profit() {
 
       <div style={{ fontSize: "0.75rem", color: "var(--text-faint)", marginTop: "0.75rem", lineHeight: 1.6 }}>
         <div><b>Sales</b> = total exact des commandes Shopify du jour (ce que le client a payé).</div>
-        <div><b>COGS</b> = Σ (quantité vendue × COGS par variante) — gifts inclus (tu paies même ce qui est offert).</div>
+        <div><b>COGS</b> = Σ (quantité vendue × COGS par variante) + coût shipping par commande (selon palier 1/3/5/10 items) — gifts inclus.</div>
         <div><b>Meta Ads (TTC)</b> = Ads HT × (1 + {taxOnAdSpendPct}% TVA sur dépenses pub).</div>
         <div><b>Taxes</b> = Sales × {totalTaxOnSalesPct}% (URSSAF {data.config.urssaf || 0}% + IR {data.config.ir || 0}% + TVA {data.config.tva || 0}%).</div>
         <div><b>Profit Brut</b> = Sales − Meta Ads TTC − COGS</div>

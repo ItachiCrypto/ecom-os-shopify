@@ -96,6 +96,11 @@ export interface EcomConfig {
   bundles?: Bundle[];
   // Daily ad spend (key: YYYY-MM-DD, value: spend amount in shop currency)
   dailyAds?: Record<string, { spend: number; notes?: string }>;
+  // Shipping cost brackets: key = max quantity for this bracket, value = shipping cost.
+  // E.g. { "1": 3.5, "3": 5, "5": 7, "10": 10 }
+  // An order with N total items uses the SMALLEST bracket where N <= bracket.
+  // N > largest bracket falls back to the largest bracket's cost.
+  shippingCostByQty?: Record<string, number>;
 }
 
 export interface Testing {
