@@ -5,7 +5,7 @@ import Shell from "@/components/Shell";
 import { fmtMoney } from "@/lib/order-utils";
 import { useDateRangeCtx } from "@/components/DateRangeContext";
 import { inRange } from "@/hooks/useDateRange";
-import type { ProductCost } from "@/lib/types";
+import type { ProductCost, Bundle } from "@/lib/types";
 
 interface Money { shopMoney: { amount: string; currencyCode: string } }
 interface Variant {
@@ -37,6 +37,7 @@ interface ShopData {
     ir: number;
     taxOnAdSpend?: number;
     productCosts?: Record<string, ProductCost>;
+    bundles?: Bundle[];
     dailyAds?: Record<string, { spend: number; notes?: string }>;
   };
 }
@@ -84,10 +85,23 @@ function Profit() {
     if (!orders || !data) return { days: [], total: null, activeVariants: [] };
 
     const productCosts = data.config.productCosts || {};
+    const bundles = (data.config.bundles || []).filter((b) => b.active);
     const dailyAds = data.config.dailyAds || {};
     const taxPct = data.config.taxOnAdSpend ?? 5;
     const urssaf = data.config.urssaf || 0;
     const ir = data.config.ir || 0;
+
+    // Pre-compute bundle COGS per trigger variant (sum across bundles)
+    const bundleExtraCogsPerTrigger: Record<string, number> = {};
+    for (const b of bundles) {
+      const bundleCogs = b.items.reduce((s, it) => {
+        const pc = productCosts[it.variantId];
+        return s + (pc?.cogs || 0) * it.quantity;
+      }, 0);
+      for (const tid of b.triggerVariantIds) {
+        bundleExtraCogsPerTrigger[tid] = (bundleExtraCogsPerTrigger[tid] || 0) + bundleCogs;
+      }
+    }
 
     // Active variants list (for dynamic columns)
     const activeVariants = Object.entries(productCosts)
@@ -130,6 +144,12 @@ function Profit() {
         day.qtyByVariant[variantId] = (day.qtyByVariant[variantId] || 0) + li.quantity;
         day.sales += parseFloat(li.originalTotalSet.shopMoney.amount);
         day.cogs += li.quantity * pc.cogs;
+
+        // Add bundle extras: e.g. "every ring sold → +1 free lube's cost"
+        const bundleExtra = bundleExtraCogsPerTrigger[variantId] || 0;
+        if (bundleExtra > 0) {
+          day.cogs += li.quantity * bundleExtra;
+        }
       }
     }
 

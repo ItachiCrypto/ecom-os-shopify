@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Shell from "@/components/Shell";
-import type { EcomConfig, ProductCost } from "@/lib/types";
+import type { EcomConfig, ProductCost, Bundle } from "@/lib/types";
 
 interface ShopifyMarket {
   id: string;
@@ -169,6 +169,12 @@ function Parametres() {
           products={products}
           currency={shopInfo?.currencyCode || "USD"}
           onChange={(productCosts) => set({ productCosts })}
+        />
+
+        <BundlesSection
+          config={config}
+          products={products}
+          onChange={(bundles) => set({ bundles })}
         />
 
         <div className="card" style={{ gridColumn: "1 / -1" }}>
@@ -430,6 +436,202 @@ function ProductCostsSection({
               })}
             </tbody>
           </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function uid() { return Math.random().toString(36).slice(2, 10); }
+
+function BundlesSection({
+  config,
+  products,
+  onChange,
+}: {
+  config: EcomConfig;
+  products: ShopifyProduct[];
+  onChange: (bundles: Bundle[]) => void;
+}) {
+  const bundles = config.bundles || [];
+  const productCosts = config.productCosts || {};
+
+  // Flatten variants for dropdowns
+  const variants = products.flatMap((p) =>
+    p.variants.edges.map((e) => ({
+      variantId: e.node.id,
+      label: `${p.title}${e.node.title !== "Default Title" ? ` — ${e.node.title}` : ""}${e.node.sku ? ` (${e.node.sku})` : ""}`,
+    }))
+  );
+
+  const addBundle = () => {
+    onChange([
+      ...bundles,
+      { id: uid(), name: "Nouveau bundle", triggerVariantIds: [], items: [], active: true },
+    ]);
+  };
+
+  const updateBundle = (id: string, patch: Partial<Bundle>) => {
+    onChange(bundles.map((b) => (b.id === id ? { ...b, ...patch } : b)));
+  };
+
+  const removeBundle = (id: string) => {
+    onChange(bundles.filter((b) => b.id !== id));
+  };
+
+  const bundleCogs = (b: Bundle): number => {
+    return b.items.reduce((s, it) => {
+      const pc = productCosts[it.variantId];
+      return s + (pc?.cogs || 0) * it.quantity;
+    }, 0);
+  };
+
+  return (
+    <div className="card" style={{ gridColumn: "1 / -1" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "start", marginBottom: "0.5rem", gap: "1rem" }}>
+        <div>
+          <div style={{ fontSize: "1.05rem", fontWeight: 600 }}>🎁 Bundles / Produits offerts</div>
+          <div style={{ fontSize: "0.75rem", color: "var(--text-dim)", marginTop: "0.25rem", lineHeight: 1.5 }}>
+            Définis des bundles pour tracker les produits offerts avec une vente.
+            Ex: &quot;Chaque ring vendu = 1 lubrifiant offert&quot; → le COGS du lubrifiant est automatiquement ajouté
+            au jour où un ring est vendu (même s&apos;il est à 0$ dans Shopify).
+          </div>
+        </div>
+        <button className="btn btn-primary" onClick={addBundle}>+ Bundle</button>
+      </div>
+
+      {bundles.length === 0 ? (
+        <div style={{ padding: "1.5rem", textAlign: "center", color: "var(--text-faint)", fontSize: "0.85rem" }}>
+          Aucun bundle configuré.
+        </div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
+          {bundles.map((b) => (
+            <div key={b.id} style={{ border: "1px solid var(--border)", borderRadius: 8, padding: "0.75rem", background: "var(--bg-elevated)" }}>
+              <div style={{ display: "grid", gridTemplateColumns: "2fr auto auto auto", gap: "0.5rem", alignItems: "center", marginBottom: "0.75rem" }}>
+                <input
+                  className="input"
+                  placeholder="Nom du bundle"
+                  value={b.name}
+                  onChange={(e) => updateBundle(b.id, { name: e.target.value })}
+                  style={{ fontWeight: 500 }}
+                />
+                <div className="pill pill-blue" style={{ whiteSpace: "nowrap" }}>
+                  COGS bundle: {bundleCogs(b).toFixed(2)}
+                </div>
+                <label style={{ display: "flex", alignItems: "center", gap: "0.35rem", fontSize: "0.8rem", color: "var(--text-dim)" }}>
+                  <input
+                    type="checkbox"
+                    checked={b.active}
+                    onChange={(e) => updateBundle(b.id, { active: e.target.checked })}
+                  />
+                  Actif
+                </label>
+                <button className="btn btn-danger" onClick={() => removeBundle(b.id)}>✕</button>
+              </div>
+
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.75rem" }}>
+                <div>
+                  <div style={{ fontSize: "0.75rem", color: "var(--text-dim)", marginBottom: "0.25rem", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                    🎯 Déclenché quand ces variantes sont vendues
+                  </div>
+                  <div style={{ maxHeight: 180, overflowY: "auto", padding: "0.35rem", background: "var(--bg)", borderRadius: 6, border: "1px solid var(--border)" }}>
+                    {variants.map((v) => (
+                      <label key={v.variantId} style={{ display: "flex", alignItems: "center", gap: "0.35rem", fontSize: "0.8rem", padding: "0.2rem 0.1rem" }}>
+                        <input
+                          type="checkbox"
+                          checked={b.triggerVariantIds.includes(v.variantId)}
+                          onChange={(e) => {
+                            const next = e.target.checked
+                              ? [...b.triggerVariantIds, v.variantId]
+                              : b.triggerVariantIds.filter((x) => x !== v.variantId);
+                            updateBundle(b.id, { triggerVariantIds: next });
+                          }}
+                        />
+                        <span>{v.label}</span>
+                      </label>
+                    ))}
+                  </div>
+                  <div style={{ fontSize: "0.7rem", color: "var(--text-faint)", marginTop: "0.25rem" }}>
+                    {b.triggerVariantIds.length} sélectionné(s)
+                  </div>
+                </div>
+
+                <div>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.25rem" }}>
+                    <div style={{ fontSize: "0.75rem", color: "var(--text-dim)", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                      🎁 Produits offerts (par unité vendue)
+                    </div>
+                    <button
+                      className="btn"
+                      style={{ fontSize: "0.7rem", padding: "0.25rem 0.5rem" }}
+                      onClick={() =>
+                        updateBundle(b.id, {
+                          items: [...b.items, { variantId: variants[0]?.variantId || "", quantity: 1 }],
+                        })
+                      }
+                    >
+                      + Item
+                    </button>
+                  </div>
+                  {b.items.length === 0 ? (
+                    <div style={{ fontSize: "0.75rem", color: "var(--text-faint)", padding: "0.5rem", textAlign: "center" }}>
+                      Aucun produit offert
+                    </div>
+                  ) : (
+                    <div style={{ display: "flex", flexDirection: "column", gap: "0.25rem" }}>
+                      {b.items.map((it, idx) => {
+                        const pc = productCosts[it.variantId];
+                        const cogs = pc?.cogs || 0;
+                        return (
+                          <div key={idx} style={{ display: "grid", gridTemplateColumns: "1fr 60px 90px auto", gap: "0.35rem", alignItems: "center" }}>
+                            <select
+                              className="select"
+                              value={it.variantId}
+                              onChange={(e) => {
+                                const next = [...b.items];
+                                next[idx] = { ...it, variantId: e.target.value };
+                                updateBundle(b.id, { items: next });
+                              }}
+                              style={{ fontSize: "0.8rem" }}
+                            >
+                              <option value="">— Choisir —</option>
+                              {variants.map((v) => (
+                                <option key={v.variantId} value={v.variantId}>{v.label}</option>
+                              ))}
+                            </select>
+                            <input
+                              className="input mono"
+                              type="number"
+                              min={1}
+                              step={1}
+                              value={it.quantity}
+                              onChange={(e) => {
+                                const next = [...b.items];
+                                next[idx] = { ...it, quantity: parseInt(e.target.value) || 1 };
+                                updateBundle(b.id, { items: next });
+                              }}
+                              style={{ fontSize: "0.8rem" }}
+                            />
+                            <div className="mono" style={{ fontSize: "0.75rem", color: "var(--text-dim)", textAlign: "right" }}>
+                              {cogs > 0 ? `${(cogs * it.quantity).toFixed(2)}€` : "—"}
+                            </div>
+                            <button
+                              className="btn btn-danger"
+                              style={{ padding: "0.25rem 0.5rem", fontSize: "0.75rem" }}
+                              onClick={() => updateBundle(b.id, { items: b.items.filter((_, i) => i !== idx) })}
+                            >
+                              ✕
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          ))}
         </div>
       )}
     </div>

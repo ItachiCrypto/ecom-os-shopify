@@ -54,6 +54,24 @@ export interface ProductCost {
   active: boolean; // include in Profit page calculations
 }
 
+/**
+ * Bundle = "For every [trigger variant] sold, these extra items ship with it".
+ * Used to track the real COGS of promo bundles (e.g. "Every ring sold comes
+ * with 1 free lube — we still pay the lube's cost").
+ */
+export interface Bundle {
+  id: string;
+  name: string; // "Pack Ring + Lub offert"
+  // Shopify variant IDs that, when sold, trigger this bundle's extra items
+  triggerVariantIds: string[];
+  // Extra items included per trigger (real cost, even if customer pays $0 for them)
+  items: {
+    variantId: string; // variant ID from Shopify (must exist in productCosts)
+    quantity: number;  // per 1 trigger sold
+  }[];
+  active: boolean;
+}
+
 export interface EcomConfig {
   shopifyPct: number;
   shopifyFixe: number;
@@ -74,6 +92,8 @@ export interface EcomConfig {
   taxOnAdSpend?: number;
   // COGS per variant (key: variant ID)
   productCosts?: Record<string, ProductCost>;
+  // Bundles (e.g. "ring + free lube") — extra items that ship with each trigger variant sold
+  bundles?: Bundle[];
   // Daily ad spend (key: YYYY-MM-DD, value: spend amount in shop currency)
   dailyAds?: Record<string, { spend: number; notes?: string }>;
 }
@@ -187,6 +207,7 @@ export const DEFAULT_CONFIG: EcomConfig = {
   alerteLivraison: {},
   taxOnAdSpend: 5, // Default 5% (Meta/FB VAT)
   productCosts: {},
+  bundles: [],
   dailyAds: {},
 };
 
