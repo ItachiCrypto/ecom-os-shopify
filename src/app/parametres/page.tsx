@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Shell from "@/components/Shell";
-import type { EcomConfig } from "@/lib/types";
+import type { EcomConfig, ProductCost } from "@/lib/types";
 
 interface ShopifyMarket {
   id: string;
@@ -21,22 +21,46 @@ interface ShopInfo {
   plan: { displayName: string };
 }
 
+interface ShopifyProduct {
+  id: string;
+  title: string;
+  status: string;
+  totalInventory: number;
+  variants: {
+    edges: {
+      node: {
+        id: string;
+        title: string;
+        sku: string | null;
+        price: string;
+        inventoryQuantity: number;
+        inventoryItem?: { unitCost: { amount: string; currencyCode: string } | null } | null;
+      };
+    }[];
+  };
+}
+
 export default function ParametresPage() { return <Shell><Parametres /></Shell>; }
 
 function Parametres() {
   const [config, setConfig] = useState<EcomConfig | null>(null);
   const [shopInfo, setShopInfo] = useState<ShopInfo | null>(null);
   const [markets, setMarkets] = useState<ShopifyMarket[]>([]);
+  const [products, setProducts] = useState<ShopifyProduct[]>([]);
   const [dirty, setDirty] = useState(false);
   const [saved, setSaved] = useState(false);
 
   useEffect(() => {
-    Promise.all([fetch("/api/data").then(r => r.json()), fetch("/api/shop").then(r => r.json())])
-      .then(([d, s]) => {
-        setConfig(d.data.config);
-        if (s.shop) setShopInfo(s.shop);
-        if (s.markets) setMarkets(s.markets);
-      });
+    Promise.all([
+      fetch("/api/data").then(r => r.json()),
+      fetch("/api/shop").then(r => r.json()),
+      fetch("/api/products").then(r => r.ok ? r.json() : { products: [] }),
+    ]).then(([d, s, p]) => {
+      setConfig(d.data.config);
+      if (s.shop) setShopInfo(s.shop);
+      if (s.markets) setMarkets(s.markets);
+      if (p.products) setProducts(p.products);
+    });
   }, []);
 
   useEffect(() => {
@@ -137,7 +161,15 @@ function Parametres() {
           <Row label={`Objectif CA /semaine (${shopInfo?.currencyCode || "USD"})`} value={config.objectifCA} onChange={v => set({ objectifCA: v })} />
           <Row label={`Objectif profit /semaine`} value={config.objectifProfit} onChange={v => set({ objectifProfit: v })} />
           <Row label="Alerte runway (jours)" value={config.alerteRunway} onChange={v => set({ alerteRunway: v })} step={1} />
+          <Row label="TVA sur dépenses pub (%)" value={config.taxOnAdSpend ?? 5} onChange={v => set({ taxOnAdSpend: v })} />
         </div>
+
+        <ProductCostsSection
+          config={config}
+          products={products}
+          currency={shopInfo?.currencyCode || "USD"}
+          onChange={(productCosts) => set({ productCosts })}
+        />
 
         <div className="card" style={{ gridColumn: "1 / -1" }}>
           <div style={{ fontSize: "1.05rem", fontWeight: 600, marginBottom: "0.25rem" }}>
@@ -231,6 +263,175 @@ function Row({ label, value, onChange, step = 0.01 }: { label: string; value: nu
     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0.4rem 0", borderBottom: "1px solid var(--border)" }}>
       <span style={{ fontSize: "0.85rem", color: "var(--text-dim)" }}>{label}</span>
       <input className="input mono" type="number" step={step} value={value} onChange={e => onChange(parseFloat(e.target.value) || 0)} style={{ maxWidth: 120 }} />
+    </div>
+  );
+}
+
+function ProductCostsSection({
+  config,
+  products,
+  currency,
+  onChange,
+}: {
+  config: EcomConfig;
+  products: ShopifyProduct[];
+  currency: string;
+  onChange: (pc: Record<string, ProductCost>) => void;
+}) {
+  const [search, setSearch] = useState("");
+  const [showInactive, setShowInactive] = useState(false);
+  const costs = config.productCosts || {};
+
+  const updateVariant = (variantId: string, patch: Partial<ProductCost>) => {
+    const next = { ...costs, [variantId]: { ...costs[variantId], ...patch } as ProductCost };
+    onChange(next);
+  };
+
+  const flattened = products.flatMap((p) =>
+    p.variants.edges.map((e) => ({
+      variantId: e.node.id,
+      variantTitle: e.node.title,
+      sku: e.node.sku,
+      price: parseFloat(e.node.price),
+      unitCost: e.node.inventoryItem?.unitCost
+        ? parseFloat(e.node.inventoryItem.unitCost.amount)
+        : null,
+      productId: p.id,
+      productTitle: p.title,
+      productStatus: p.status,
+    }))
+  );
+
+  const filtered = flattened.filter((v) => {
+    if (!showInactive && v.productStatus !== "ACTIVE") return false;
+    if (search) {
+      const s = search.toLowerCase();
+      return (v.productTitle + " " + v.variantTitle + " " + (v.sku || "")).toLowerCase().includes(s);
+    }
+    return true;
+  });
+
+  // Auto-fill price from Shopify if not set
+  const syncFromShopify = () => {
+    const next: Record<string, ProductCost> = { ...costs };
+    flattened.forEach((v) => {
+      const existing = next[v.variantId];
+      next[v.variantId] = {
+        productTitle: v.productTitle,
+        variantTitle: v.variantTitle,
+        price: v.price,
+        cogs: existing?.cogs ?? v.unitCost ?? 0,
+        active: existing?.active ?? true,
+      };
+    });
+    onChange(next);
+  };
+
+  const fmt = (n: number) =>
+    new Intl.NumberFormat("fr-FR", { style: "currency", currency, minimumFractionDigits: 2 }).format(n);
+
+  return (
+    <div className="card" style={{ gridColumn: "1 / -1" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "start", marginBottom: "0.5rem", gap: "1rem" }}>
+        <div>
+          <div style={{ fontSize: "1.05rem", fontWeight: 600 }}>💰 Coûts produits (COGS)</div>
+          <div style={{ fontSize: "0.75rem", color: "var(--text-dim)", marginTop: "0.25rem", lineHeight: 1.5 }}>
+            Saisis le coût unitaire de chaque variante pour que la page <b>Profit</b> calcule tes marges réelles.
+            Si tu as déjà renseigné le &quot;Unit cost&quot; dans Shopify Inventory, il est importé automatiquement.
+          </div>
+        </div>
+        <button className="btn" onClick={syncFromShopify} style={{ whiteSpace: "nowrap" }}>
+          🔄 Synchroniser depuis Shopify
+        </button>
+      </div>
+
+      <div style={{ display: "flex", gap: "0.75rem", marginBottom: "0.75rem", marginTop: "0.75rem" }}>
+        <input
+          className="input"
+          placeholder="Rechercher un produit ou variante..."
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          style={{ flex: 1 }}
+        />
+        <label style={{ display: "flex", alignItems: "center", gap: "0.35rem", fontSize: "0.85rem", color: "var(--text-dim)" }}>
+          <input type="checkbox" checked={showInactive} onChange={(e) => setShowInactive(e.target.checked)} />
+          Afficher produits inactifs
+        </label>
+      </div>
+
+      {flattened.length === 0 ? (
+        <div style={{ padding: "1rem", textAlign: "center", color: "var(--text-faint)", fontSize: "0.85rem" }}>
+          Chargement des produits Shopify...
+        </div>
+      ) : (
+        <div style={{ overflowX: "auto" }}>
+          <table className="table">
+            <thead>
+              <tr>
+                <th>Produit / Variante</th>
+                <th>SKU</th>
+                <th style={{ textAlign: "right" }}>Prix Shopify</th>
+                <th style={{ textAlign: "right" }}>Coût unitaire (COGS)</th>
+                <th style={{ textAlign: "right" }}>Marge brute</th>
+                <th style={{ textAlign: "center" }}>Inclure dans Profit</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map((v) => {
+                const existing = costs[v.variantId];
+                const cogsValue = existing?.cogs ?? v.unitCost ?? 0;
+                const marge = v.price - cogsValue;
+                const margePct = v.price > 0 ? (marge / v.price) * 100 : 0;
+                const active = existing?.active ?? true;
+                return (
+                  <tr key={v.variantId}>
+                    <td>
+                      <div style={{ fontWeight: 500, fontSize: "0.85rem" }}>{v.productTitle}</div>
+                      {v.variantTitle !== "Default Title" && (
+                        <div style={{ fontSize: "0.75rem", color: "var(--text-dim)" }}>{v.variantTitle}</div>
+                      )}
+                    </td>
+                    <td style={{ fontSize: "0.75rem", color: "var(--text-dim)" }} className="mono">{v.sku || "—"}</td>
+                    <td className="mono" style={{ textAlign: "right" }}>{fmt(v.price)}</td>
+                    <td style={{ textAlign: "right" }}>
+                      <input
+                        className="input mono"
+                        type="number"
+                        step="0.01"
+                        value={cogsValue}
+                        onChange={(e) => updateVariant(v.variantId, {
+                          productTitle: v.productTitle,
+                          variantTitle: v.variantTitle,
+                          price: v.price,
+                          cogs: parseFloat(e.target.value) || 0,
+                          active,
+                        })}
+                        style={{ maxWidth: 100, textAlign: "right", marginLeft: "auto" }}
+                      />
+                    </td>
+                    <td className={`mono ${margePct > 50 ? "green" : margePct > 25 ? "orange" : "red"}`} style={{ textAlign: "right" }}>
+                      {cogsValue > 0 ? `${fmt(marge)} (${margePct.toFixed(0)}%)` : "—"}
+                    </td>
+                    <td style={{ textAlign: "center" }}>
+                      <input
+                        type="checkbox"
+                        checked={active}
+                        onChange={(e) => updateVariant(v.variantId, {
+                          productTitle: v.productTitle,
+                          variantTitle: v.variantTitle,
+                          price: v.price,
+                          cogs: cogsValue,
+                          active: e.target.checked,
+                        })}
+                      />
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }

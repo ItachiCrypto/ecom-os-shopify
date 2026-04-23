@@ -8,6 +8,7 @@ import DateRangePicker from "./DateRangePicker";
 
 const NAV = [
   { href: "/", label: "Dashboard", icon: "📊" },
+  { href: "/profit", label: "Profit Journalier", icon: "💹" },
   { href: "/commandes", label: "Commandes", icon: "📦" },
   { href: "/roas", label: "ROAS Calculator", icon: "🎯" },
   { href: "/testings", label: "Testings", icon: "🧪" },

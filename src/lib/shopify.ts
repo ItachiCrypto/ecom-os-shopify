@@ -82,7 +82,13 @@ const ORDERS_QUERY = `
               node {
                 title
                 quantity
-                variant { title price sku }
+                variant {
+                  id
+                  title
+                  price
+                  sku
+                  product { id title }
+                }
                 originalTotalSet { shopMoney { amount currencyCode } }
               }
             }
@@ -221,7 +227,7 @@ const PRODUCTS_QUERY = `
           status
           totalInventory
           featuredImage { url altText }
-          variants(first: 10) {
+          variants(first: 20) {
             edges {
               node {
                 id
@@ -229,6 +235,9 @@ const PRODUCTS_QUERY = `
                 sku
                 price
                 inventoryQuantity
+                inventoryItem {
+                  unitCost { amount currencyCode }
+                }
               }
             }
           }

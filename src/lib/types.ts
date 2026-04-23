@@ -45,6 +45,15 @@ export interface PaymentFee {
   fixe: number;
 }
 
+export interface ProductCost {
+  // Shopify variant ID (gid://shopify/ProductVariant/XXX) is the key
+  productTitle: string; // denormalized for display
+  variantTitle: string;
+  price: number; // current selling price (from Shopify)
+  cogs: number; // cost of goods sold per unit (user input)
+  active: boolean; // include in Profit page calculations
+}
+
 export interface EcomConfig {
   shopifyPct: number;
   shopifyFixe: number;
@@ -61,6 +70,12 @@ export interface EcomConfig {
   // Date when this store "started" (new product, new phase, etc).
   // Used as default for date filters. ISO string (YYYY-MM-DD).
   shopStartDate?: string;
+  // Tax applied on ad spend (e.g. Meta VAT in Ireland = ~5%)
+  taxOnAdSpend?: number;
+  // COGS per variant (key: variant ID)
+  productCosts?: Record<string, ProductCost>;
+  // Daily ad spend (key: YYYY-MM-DD, value: spend amount in shop currency)
+  dailyAds?: Record<string, { spend: number; notes?: string }>;
 }
 
 export interface Testing {
@@ -170,6 +185,9 @@ export const DEFAULT_CONFIG: EcomConfig = {
   objectifProfit: 0,
   alerteRunway: 7,
   alerteLivraison: {},
+  taxOnAdSpend: 5, // Default 5% (Meta/FB VAT)
+  productCosts: {},
+  dailyAds: {},
 };
 
 export function defaultShopData(shop: string, accessToken: string): ShopData {
