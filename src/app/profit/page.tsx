@@ -38,6 +38,7 @@ interface ShopData {
   config: {
     urssaf: number;
     ir: number;
+    tva: number;
     taxOnAdSpend?: number;
     productCosts?: Record<string, ProductCost>;
     bundles?: Bundle[];
@@ -93,6 +94,8 @@ function Profit() {
     const taxPct = data.config.taxOnAdSpend ?? 5;
     const urssaf = data.config.urssaf || 0;
     const ir = data.config.ir || 0;
+    const tva = data.config.tva || 0;
+    const totalTaxRate = urssaf + ir + tva; // Total % taxes applied on sales
 
     // Pre-compute bundle COGS per trigger variant (sum across bundles)
     const bundleExtraCogsPerTrigger: Record<string, number> = {};
@@ -165,18 +168,19 @@ function Profit() {
       .sort((a, b) => a.date.localeCompare(b.date))
       .map((d) => {
         const adsRaw = dailyAds[d.date]?.spend || 0;
-        const adsWithTax = adsRaw * (1 + taxPct / 100);
+        const adsWithTax = adsRaw * (1 + taxPct / 100); // Ads TTC (what it really costs you)
         const profitBrut = d.sales - adsWithTax - d.cogs;
         const profitBrutPct = d.sales > 0 ? (profitBrut / d.sales) * 100 : 0;
-        // Net after URSSAF + IR on sales
-        const provisions = (d.sales * (urssaf + ir)) / 100;
-        const profitNet = profitBrut - provisions;
+        // Taxes on sales: URSSAF + IR + TVA (from Fiscalité section)
+        const taxes = (d.sales * totalTaxRate) / 100;
+        const profitNet = profitBrut - taxes;
         const profitNetPct = d.sales > 0 ? (profitNet / d.sales) * 100 : 0;
         const roas = adsRaw > 0 ? d.sales / adsRaw : 0;
         return {
           ...d,
           adsRaw,
           adsWithTax,
+          taxes,
           profitBrut,
           profitBrutPct,
           profitNet,
@@ -193,6 +197,7 @@ function Profit() {
         acc.cogs += d.cogs;
         acc.adsRaw += d.adsRaw;
         acc.adsWithTax += d.adsWithTax;
+        acc.taxes += d.taxes;
         acc.profitBrut += d.profitBrut;
         acc.profitNet += d.profitNet;
         activeVariants.forEach((v) => {
@@ -206,6 +211,7 @@ function Profit() {
         cogs: 0,
         adsRaw: 0,
         adsWithTax: 0,
+        taxes: 0,
         profitBrut: 0,
         profitNet: 0,
         qtyByVariant: {} as Record<string, number>,
@@ -256,6 +262,14 @@ function Profit() {
 
   const hasAnyProducts = activeVariants.length > 0;
 
+  // Read tax rates from config for header display
+  const taxOnAdSpendPct = (data?.config?.taxOnAdSpend ?? 5).toFixed(data?.config?.taxOnAdSpend && !Number.isInteger(data.config.taxOnAdSpend) ? 2 : 0);
+  const totalTaxOnSalesPct = (
+    (data?.config?.urssaf || 0) +
+    (data?.config?.ir || 0) +
+    (data?.config?.tva || 0)
+  ).toFixed(2);
+
   return (
     <div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem" }}>
@@ -280,7 +294,7 @@ function Profit() {
 
       {/* Summary KPIs */}
       {total && (
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: "0.75rem", marginBottom: "1rem" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: "0.75rem", marginBottom: "1rem" }}>
           <div className="kpi">
             <div className="kpi-label">Total Sales</div>
             <div className="kpi-value accent">{fmtMoney(total.sales, currency)}</div>
@@ -290,9 +304,16 @@ function Profit() {
             <div className="kpi-value orange">{fmtMoney(total.cogs, currency)}</div>
           </div>
           <div className="kpi">
-            <div className="kpi-label">Meta Ads (HT)</div>
-            <div className="kpi-value red">{fmtMoney(total.adsRaw, currency)}</div>
-            <div className="kpi-delta">+TVA: {fmtMoney(total.adsWithTax, currency)}</div>
+            <div className="kpi-label">Meta Ads TTC</div>
+            <div className="kpi-value red">{fmtMoney(total.adsWithTax, currency)}</div>
+            <div className="kpi-delta">HT: {fmtMoney(total.adsRaw, currency)} +{taxOnAdSpendPct}% TVA</div>
+          </div>
+          <div className="kpi">
+            <div className="kpi-label">Taxes</div>
+            <div className="kpi-value" style={{ color: "var(--purple)" }}>
+              {fmtMoney(total.taxes, currency)}
+            </div>
+            <div className="kpi-delta">{totalTaxOnSalesPct}% sur Sales</div>
           </div>
           <div className="kpi">
             <div className="kpi-label">Profit Brut</div>
@@ -335,10 +356,19 @@ function Profit() {
                   </th>
                 ))}
                 <th style={{ textAlign: "right", background: "rgba(248, 113, 113, 0.15)", color: "var(--red)" }}>
-                  Meta Ads
+                  <div>Meta Ads (TTC)</div>
+                  <div style={{ fontSize: "0.65rem", opacity: 0.8, fontWeight: 400 }}>
+                    +{taxOnAdSpendPct}% TVA
+                  </div>
                 </th>
                 <th style={{ textAlign: "right", background: "rgba(251, 191, 36, 0.15)" }}>COGS</th>
                 <th style={{ textAlign: "right", background: "rgba(200, 165, 90, 0.15)" }}>Total Sales</th>
+                <th style={{ textAlign: "right", background: "rgba(167, 139, 250, 0.15)", color: "var(--purple)" }}>
+                  <div>Taxes</div>
+                  <div style={{ fontSize: "0.65rem", opacity: 0.8, fontWeight: 400 }}>
+                    {totalTaxOnSalesPct}% sur Sales
+                  </div>
+                </th>
                 <th style={{ textAlign: "right", background: "rgba(52, 211, 153, 0.10)" }}>Profit Brut</th>
                 <th style={{ textAlign: "right", background: "rgba(52, 211, 153, 0.10)" }}>%</th>
                 <th style={{ textAlign: "right", background: "rgba(52, 211, 153, 0.15)" }}>Profit Net</th>
@@ -359,21 +389,32 @@ function Profit() {
                     </td>
                   ))}
                   <td style={{ textAlign: "right" }}>
-                    <input
-                      type="number"
-                      step="0.01"
-                      className="input mono"
-                      value={d.adsRaw || ""}
-                      onChange={(e) => updateAdSpend(d.date, parseFloat(e.target.value) || 0, d.notes)}
-                      placeholder="0"
-                      style={{ maxWidth: 90, textAlign: "right", fontSize: "0.8rem", marginLeft: "auto" }}
-                    />
+                    <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end" }}>
+                      <input
+                        type="number"
+                        step="0.01"
+                        className="input mono"
+                        value={d.adsRaw || ""}
+                        onChange={(e) => updateAdSpend(d.date, parseFloat(e.target.value) || 0, d.notes)}
+                        placeholder="0 (HT)"
+                        style={{ maxWidth: 90, textAlign: "right", fontSize: "0.8rem" }}
+                        title="Saisis le montant HT — le TTC est calculé automatiquement"
+                      />
+                      {d.adsRaw > 0 && (
+                        <div className="mono red" style={{ fontSize: "0.65rem", marginTop: "0.15rem", opacity: 0.8 }}>
+                          TTC: {fmtMoney(d.adsWithTax, currency)}
+                        </div>
+                      )}
+                    </div>
                   </td>
                   <td className="mono orange" style={{ textAlign: "right" }}>
                     {d.cogs > 0 ? fmtMoney(d.cogs, currency) : "—"}
                   </td>
                   <td className="mono accent" style={{ textAlign: "right", fontWeight: 500 }}>
                     {d.sales > 0 ? fmtMoney(d.sales, currency) : "—"}
+                  </td>
+                  <td className="mono" style={{ textAlign: "right", color: "var(--purple)" }}>
+                    {d.sales > 0 ? `-${fmtMoney(d.taxes, currency)}` : "—"}
                   </td>
                   <td className="mono" style={{ textAlign: "right", color: cellColor(d.profitBrut, 0, 100) }}>
                     {d.sales > 0 || d.adsRaw > 0 ? fmtMoney(d.profitBrut, currency) : "—"}
@@ -401,9 +442,19 @@ function Profit() {
                       {total.qtyByVariant[v.variantId] || 0}
                     </td>
                   ))}
-                  <td className="mono red" style={{ textAlign: "right" }}>{fmtMoney(total.adsRaw, currency)}</td>
+                  <td className="mono red" style={{ textAlign: "right" }}>
+                    <div>{fmtMoney(total.adsRaw, currency)}</div>
+                    {total.adsRaw > 0 && (
+                      <div style={{ fontSize: "0.65rem", opacity: 0.8, fontWeight: 400 }}>
+                        TTC: {fmtMoney(total.adsWithTax, currency)}
+                      </div>
+                    )}
+                  </td>
                   <td className="mono orange" style={{ textAlign: "right" }}>{fmtMoney(total.cogs, currency)}</td>
                   <td className="mono accent" style={{ textAlign: "right" }}>{fmtMoney(total.sales, currency)}</td>
+                  <td className="mono" style={{ textAlign: "right", color: "var(--purple)" }}>
+                    -{fmtMoney(total.taxes, currency)}
+                  </td>
                   <td className="mono" style={{ textAlign: "right", color: cellColor(total.profitBrut, 0, 100) }}>
                     {fmtMoney(total.profitBrut, currency)}
                   </td>
@@ -429,8 +480,10 @@ function Profit() {
       <div style={{ fontSize: "0.75rem", color: "var(--text-faint)", marginTop: "0.75rem", lineHeight: 1.6 }}>
         <div><b>Sales</b> = total exact des commandes Shopify du jour (ce que le client a payé).</div>
         <div><b>COGS</b> = Σ (quantité vendue × COGS par variante) — gifts inclus (tu paies même ce qui est offert).</div>
-        <div><b>Profit Brut</b> = Sales − (Ads × {(1 + (data.config.taxOnAdSpend ?? 5) / 100).toFixed(2)}) − COGS</div>
-        <div><b>Profit Net</b> = Profit Brut − Sales × {((data.config.urssaf || 0) + (data.config.ir || 0)).toFixed(2)}% (URSSAF+IR)</div>
+        <div><b>Meta Ads (TTC)</b> = Ads HT × (1 + {taxOnAdSpendPct}% TVA sur dépenses pub).</div>
+        <div><b>Taxes</b> = Sales × {totalTaxOnSalesPct}% (URSSAF {data.config.urssaf || 0}% + IR {data.config.ir || 0}% + TVA {data.config.tva || 0}%).</div>
+        <div><b>Profit Brut</b> = Sales − Meta Ads TTC − COGS</div>
+        <div><b>Profit Net</b> = Profit Brut − Taxes</div>
         <div><b>ROAS</b> = Sales / Ads (HT)</div>
       </div>
     </div>
