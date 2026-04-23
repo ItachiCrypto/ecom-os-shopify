@@ -346,15 +346,6 @@ function Profit() {
               <tr>
                 <th style={{ position: "sticky", left: 0, background: "var(--bg-elevated)", zIndex: 1 }}>Date</th>
                 <th style={{ textAlign: "center" }}>Orders</th>
-                {activeVariants.map((v) => (
-                  <th key={v.variantId} style={{ textAlign: "center", background: "rgba(96, 165, 250, 0.15)", color: "var(--blue)" }}>
-                    <div style={{ fontSize: "0.7rem" }}>{v.productTitle}</div>
-                    {v.variantTitle !== "Default Title" && (
-                      <div style={{ fontSize: "0.65rem", opacity: 0.7 }}>{v.variantTitle}</div>
-                    )}
-                    <div style={{ fontSize: "0.65rem", opacity: 0.8 }}>({fmtMoney(v.price, currency)})</div>
-                  </th>
-                ))}
                 <th style={{ textAlign: "right", background: "rgba(248, 113, 113, 0.15)", color: "var(--red)" }}>
                   <div>Meta Ads (TTC)</div>
                   <div style={{ fontSize: "0.65rem", opacity: 0.8, fontWeight: 400 }}>
@@ -383,11 +374,6 @@ function Profit() {
                     {formatDay(d.date)}
                   </td>
                   <td style={{ textAlign: "center", color: "var(--text-dim)" }}>{d.orders || "—"}</td>
-                  {activeVariants.map((v) => (
-                    <td key={v.variantId} className="mono" style={{ textAlign: "center" }}>
-                      {d.qtyByVariant[v.variantId] || "—"}
-                    </td>
-                  ))}
                   <td style={{ textAlign: "right" }}>
                     <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end" }}>
                       <input
@@ -437,11 +423,6 @@ function Profit() {
                 <tr style={{ background: "rgba(200, 165, 90, 0.15)", fontWeight: 600, borderTop: "2px solid var(--accent)" }}>
                   <td style={{ position: "sticky", left: 0, background: "rgba(200, 165, 90, 0.15)", color: "var(--accent)" }}>TOTAL</td>
                   <td className="mono" style={{ textAlign: "center" }}>{total.orders}</td>
-                  {activeVariants.map((v) => (
-                    <td key={v.variantId} className="mono" style={{ textAlign: "center" }}>
-                      {total.qtyByVariant[v.variantId] || 0}
-                    </td>
-                  ))}
                   <td className="mono red" style={{ textAlign: "right" }}>
                     <div>{fmtMoney(total.adsRaw, currency)}</div>
                     {total.adsRaw > 0 && (
