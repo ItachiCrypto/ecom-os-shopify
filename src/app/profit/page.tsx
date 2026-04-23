@@ -55,6 +55,7 @@ function Profit() {
   const [currency, setCurrency] = useState("USD");
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [isAllMode, setIsAllMode] = useState(false);
   const { range } = useDateRangeCtx();
 
   useEffect(() => {
@@ -66,6 +67,7 @@ function Profit() {
       setOrders(o.orders);
       setData(d.data);
       if (s?.shop?.currencyCode) setCurrency(s.shop.currencyCode);
+      if (s?.mode === "all" || s?.shop?.myshopifyDomain === "__all__") setIsAllMode(true);
     });
   }, []);
 
@@ -319,6 +321,19 @@ function Profit() {
         </div>
       )}
 
+      {isAllMode && (
+        <div className="card" style={{ borderColor: "var(--blue)", background: "rgba(96, 165, 250, 0.05)", marginBottom: "1rem" }}>
+          <div style={{ fontWeight: 500, marginBottom: "0.25rem", color: "var(--blue)" }}>
+            🌐 Mode &quot;Toutes les boutiques&quot;
+          </div>
+          <div style={{ fontSize: "0.85rem", color: "var(--text-dim)", lineHeight: 1.5 }}>
+            Les Meta Ads affichés sont la <b>somme</b> des spends de chaque boutique. Pour <b>éditer</b>
+            le spend d&apos;une journée, switch sur la boutique concernée via le sélecteur en haut à gauche.
+            Les inputs sont en lecture seule ici pour éviter les doublons.
+          </div>
+        </div>
+      )}
+
       {/* Summary KPIs */}
       {total && (
         <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: "0.75rem", marginBottom: "1rem" }}>
@@ -403,16 +418,22 @@ function Profit() {
                   <td style={{ textAlign: "center", color: "var(--text-dim)" }}>{d.orders || "—"}</td>
                   <td style={{ textAlign: "right" }}>
                     <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end" }}>
-                      <input
-                        type="number"
-                        step="0.01"
-                        className="input mono"
-                        value={d.adsRaw || ""}
-                        onChange={(e) => updateAdSpend(d.date, parseFloat(e.target.value) || 0, d.notes)}
-                        placeholder="0 (HT)"
-                        style={{ maxWidth: 90, textAlign: "right", fontSize: "0.8rem" }}
-                        title="Saisis le montant HT — le TTC est calculé automatiquement"
-                      />
+                      {isAllMode ? (
+                        <div className="mono" style={{ textAlign: "right", fontSize: "0.85rem", color: d.adsRaw > 0 ? "var(--red)" : "var(--text-dim)" }}>
+                          {d.adsRaw > 0 ? fmtMoney(d.adsRaw, currency) : "—"}
+                        </div>
+                      ) : (
+                        <input
+                          type="number"
+                          step="0.01"
+                          className="input mono"
+                          value={d.adsRaw || ""}
+                          onChange={(e) => updateAdSpend(d.date, parseFloat(e.target.value) || 0, d.notes)}
+                          placeholder="0 (HT)"
+                          style={{ maxWidth: 90, textAlign: "right", fontSize: "0.8rem" }}
+                          title="Saisis le montant HT — le TTC est calculé automatiquement"
+                        />
+                      )}
                       {d.adsRaw > 0 && (
                         <div className="mono red" style={{ fontSize: "0.65rem", marginTop: "0.15rem", opacity: 0.8 }}>
                           TTC: {fmtMoney(d.adsWithTax, currency)}

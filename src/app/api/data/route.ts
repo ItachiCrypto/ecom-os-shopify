@@ -81,10 +81,21 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
 
+  // In ALL mode, the dailyAds coming from the client are the MERGED values (sum of all shops).
+  // Saving them back to master would cause double-counting on next merge. Preserve master's own
+  // dailyAds untouched in this case. The user can only edit dailyAds per-shop.
+  let nextConfig = body.config ?? existing.config;
+  if (shop === ALL_SHOPS && body.config) {
+    nextConfig = {
+      ...body.config,
+      dailyAds: existing.config.dailyAds,
+    };
+  }
+
   // Merge user updates with existing (never allow overwriting accessToken from client)
   const merged: ShopData = {
     ...existing,
-    config: body.config ?? existing.config,
+    config: nextConfig,
     testings: body.testings ?? existing.testings,
     scenarios: body.scenarios ?? existing.scenarios,
     abonnements: body.abonnements ?? existing.abonnements,
