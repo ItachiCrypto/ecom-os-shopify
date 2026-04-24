@@ -1,6 +1,7 @@
-import { put, list } from "@vercel/blob";
+import { get, put, list } from "@vercel/blob";
 import type { ShopData } from "./types";
 import { defaultShopData } from "./types";
+import { CONFIGURED_SHOPS } from "./config";
 
 // Auto-detect blob token from any env var containing BLOB+TOKEN
 function getBlobToken(): string | undefined {
@@ -32,14 +33,10 @@ export async function getShopData(shop: string): Promise<ShopData | null> {
   }
 
   try {
-    const { blobs } = await list({ prefix: filename(shop), token });
-    if (blobs.length === 0) return null;
-    const blob = blobs[0];
-    const sourceUrl = blob.downloadUrl || blob.url;
-    const freshUrl = `${sourceUrl}${sourceUrl.includes("?") ? "&" : "?"}_=${Date.now()}`;
-    const res = await fetch(freshUrl, { cache: "no-store" });
-    if (!res.ok) return null;
-    const data = (await res.json()) as ShopData;
+    const blob = await get(filename(shop), { access: "public", token });
+    if (!blob?.stream) return null;
+    const text = await new Response(blob.stream).text();
+    const data = JSON.parse(text) as ShopData;
     cache.set(shop, { data, expires: Date.now() + CACHE_TTL });
     return data;
   } catch (e) {
@@ -93,7 +90,7 @@ export async function mirrorConfigToAllShops(
   sourceShop: string,
   partial: Record<string, unknown>
 ): Promise<{ mirrored: string[] }> {
-  const all = await listInstalledShops();
+  const all = await listActiveShops();
   const others = all.filter((s) => s !== sourceShop);
   const mirrored: string[] = [];
   for (const shop of others) {
@@ -126,4 +123,16 @@ export async function listInstalledShops(): Promise<string[]> {
     console.error("[storage] listInstalledShops error:", e);
     return [];
   }
+}
+
+/**
+ * Shops considered part of the current workspace.
+ * This prevents the aggregate view from drifting if an old test shop blob exists.
+ */
+export async function listActiveShops(): Promise<string[]> {
+  const installed = await listInstalledShops();
+  if (CONFIGURED_SHOPS.length === 0) return installed;
+  const installedSet = new Set(installed.map((shop) => shop.toLowerCase()));
+  const configuredInstalled = CONFIGURED_SHOPS.filter((shop) => installedSet.has(shop));
+  return configuredInstalled.length > 0 ? configuredInstalled : installed;
 }

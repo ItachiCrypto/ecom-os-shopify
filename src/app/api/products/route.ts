@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getProducts } from "@/lib/shopify";
-import { listInstalledShops } from "@/lib/storage";
+import { listActiveShops } from "@/lib/storage";
 import { SHOP_COOKIE, ALL_SHOPS } from "@/lib/config";
 
 // Cache products for 5min (they don't change often)
@@ -20,7 +20,7 @@ export async function GET(request: NextRequest) {
   // ALL mode — merge products from every installed shop (each tagged with _shop)
   if (shop === ALL_SHOPS) {
     try {
-      const installed = await listInstalledShops();
+      const installed = await listActiveShops();
       const perShop = await Promise.all(
         installed.map(async (s) => {
           try {

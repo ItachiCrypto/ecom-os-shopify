@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import { listInstalledShops, getShopData } from "@/lib/storage";
+import { listActiveShops, getShopData } from "@/lib/storage";
 import { getShopInfo } from "@/lib/shopify";
 import { SHOP_COOKIE, ALL_SHOPS } from "@/lib/config";
 
 export async function GET(request: NextRequest) {
   const activeShop = request.cookies.get(SHOP_COOKIE)?.value;
-  const shops = await listInstalledShops();
+  const shops = await listActiveShops();
 
   // Enrich with display name from Shopify
   const enriched = await Promise.all(

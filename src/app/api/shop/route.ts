@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getShopInfo, getMarkets } from "@/lib/shopify";
-import { listInstalledShops } from "@/lib/storage";
+import { listActiveShops } from "@/lib/storage";
 import { SHOP_COOKIE, ALL_SHOPS, MASTER_SHOP } from "@/lib/config";
 
 export async function GET(request: NextRequest) {
@@ -11,7 +11,7 @@ export async function GET(request: NextRequest) {
   // ALL mode — return an aggregated synthetic shop info (currency from master)
   if (shop === ALL_SHOPS) {
     try {
-      const installed = await listInstalledShops();
+      const installed = await listActiveShops();
       const infos = await Promise.all(
         installed.map(async (s) => {
           try { return await getShopInfo(s); } catch { return null; }

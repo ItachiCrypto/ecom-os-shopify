@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAllOrders, getOrders } from "@/lib/shopify";
-import { listInstalledShops } from "@/lib/storage";
+import { listActiveShops } from "@/lib/storage";
 import { SHOP_COOKIE, ALL_SHOPS } from "@/lib/config";
 
 export async function GET(request: NextRequest) {
@@ -17,7 +17,7 @@ export async function GET(request: NextRequest) {
   // ALL mode — fetch orders from every installed shop and merge them
   if (shop === ALL_SHOPS) {
     try {
-      const shops = await listInstalledShops();
+      const shops = await listActiveShops();
       const perShop = await Promise.all(
         shops.map(async (s) => {
           const orders = await getAllOrders(s, 10);

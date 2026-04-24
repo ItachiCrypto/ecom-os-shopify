@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { ALL_SHOPS, MASTER_SHOP, SHOP_COOKIE } from "@/lib/config";
-import { getShopData, listInstalledShops, saveShopData } from "@/lib/storage";
+import { getShopData, listActiveShops, saveShopData } from "@/lib/storage";
 
 interface DailyAdEntry {
   spend: number;
@@ -17,7 +17,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
   }
 
-  const installed = await listInstalledShops();
+  const installed = await listActiveShops();
   const shops = activeShop === ALL_SHOPS ? installed : [activeShop];
   const dailyAdsByShop: Record<string, Record<string, DailyAdEntry>> = {};
 
@@ -60,7 +60,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Invalid spend" }, { status: 400 });
   }
 
-  const installed = await listInstalledShops();
+  const installed = await listActiveShops();
   const targetShop = activeShop === ALL_SHOPS ? body.shop : activeShop;
   if (!targetShop || targetShop === ALL_SHOPS || !installed.includes(targetShop)) {
     return NextResponse.json({ error: "Invalid shop" }, { status: 400 });
@@ -73,7 +73,7 @@ export async function POST(request: NextRequest) {
 
   const dailyAds = { ...(data.config.dailyAds || {}) };
   const notes = body.notes?.trim();
-  if (spend === 0 && !notes) {
+  if (spend === 0) {
     delete dailyAds[date];
   } else {
     dailyAds[date] = { spend, ...(notes ? { notes } : {}) };

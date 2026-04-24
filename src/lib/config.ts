@@ -35,6 +35,7 @@ const APP_2: ShopifyAppCreds = {
 };
 
 export const APPS: ShopifyAppCreds[] = [APP_1, APP_2].filter((a) => a.clientId && a.clientSecret);
+export const CONFIGURED_SHOPS = Array.from(new Set([APP_1, APP_2].flatMap((a) => a.shops)));
 
 /**
  * Pick the right Shopify app credentials for a given shop domain.

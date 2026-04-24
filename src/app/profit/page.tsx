@@ -294,32 +294,33 @@ function Profit() {
   const updateAdSpend = (date: string, spend: number, notes?: string) => {
     if (!data) return;
     const targetShop = editableShop || shops[0]?.shop;
+    const cleanNotes = notes?.trim();
 
     if (isAllMode && targetShop) {
       const currentForShop = dailyAdsByShop[targetShop] || {};
       const nextForShop = { ...currentForShop };
-      if (spend === 0 && !notes) {
+      if (spend === 0) {
         delete nextForShop[date];
       } else {
-        nextForShop[date] = { spend, ...(notes !== undefined ? { notes } : {}) };
+        nextForShop[date] = { spend, ...(cleanNotes ? { notes: cleanNotes } : {}) };
       }
       const nextByShop = { ...dailyAdsByShop, [targetShop]: nextForShop };
       setDailyAdsByShop(nextByShop);
       setData({ ...data, config: { ...data.config, dailyAds: mergeDailyAds(nextByShop) } });
-      setPendingAdSaves((prev) => ({ ...prev, [`${targetShop}:${date}`]: { shop: targetShop, date, spend, notes } }));
+      setPendingAdSaves((prev) => ({ ...prev, [`${targetShop}:${date}`]: { shop: targetShop, date, spend, notes: cleanNotes } }));
       setDirty(true);
       return;
     }
 
     const current = data.config.dailyAds || {};
     const next = { ...current };
-    if (spend === 0 && !notes) {
+    if (spend === 0) {
       delete next[date];
     } else {
-      next[date] = { spend, ...(notes !== undefined ? { notes } : {}) };
+      next[date] = { spend, ...(cleanNotes ? { notes: cleanNotes } : {}) };
     }
     setData({ ...data, config: { ...data.config, dailyAds: next } });
-    setPendingAdSaves((prev) => ({ ...prev, [date]: { date, spend, notes } }));
+    setPendingAdSaves((prev) => ({ ...prev, [date]: { date, spend, notes: cleanNotes } }));
     setDirty(true);
   };
 
@@ -379,7 +380,7 @@ function Profit() {
                 Mode &quot;Toutes les boutiques&quot;
               </div>
               <div style={{ fontSize: "0.85rem", color: "var(--text-dim)", lineHeight: 1.5 }}>
-                Les totaux Meta Ads restent agreges. Les inputs ci-dessous modifient le spend HT de la boutique selectionnee, jour par jour.
+                Les calculs utilisent la somme exacte des boutiques. Le champ modifie seulement le spend HT de la boutique selectionnee, jour par jour.
               </div>
             </div>
             <label style={{ minWidth: 240, fontSize: "0.75rem", color: "var(--text-dim)", textTransform: "uppercase", letterSpacing: "0.05em" }}>
@@ -475,7 +476,11 @@ function Profit() {
               </tr>
             </thead>
             <tbody>
-              {days.map((d) => (
+              {days.map((d) => {
+                const selectedShopEntry = isAllMode ? dailyAdsByShop[editableShop]?.[d.date] : undefined;
+                const editableSpend = isAllMode ? selectedShopEntry?.spend : d.adsRaw;
+                const editableNotes = isAllMode ? selectedShopEntry?.notes : d.notes;
+                return (
                 <tr key={d.date} style={{ background: rowBgForProfit(d.profitNet) }}>
                   <td style={{ position: "sticky", left: 0, background: "var(--bg-card)", fontWeight: 500 }}>
                     {formatDay(d.date)}
@@ -487,15 +492,15 @@ function Profit() {
                         type="number"
                         step="0.01"
                         className="input mono"
-                        value={(isAllMode ? dailyAdsByShop[editableShop]?.[d.date]?.spend : d.adsRaw) || ""}
-                        onChange={(e) => updateAdSpend(d.date, parseFloat(e.target.value) || 0, d.notes)}
+                        value={editableSpend || ""}
+                        onChange={(e) => updateAdSpend(d.date, parseFloat(e.target.value) || 0, editableNotes)}
                         placeholder="0 (HT)"
                         style={{ maxWidth: 100, textAlign: "right", fontSize: "0.8rem" }}
                         title="Saisis le montant HT - le TTC est calcule automatiquement"
                       />
                       {isAllMode && d.adsRaw > 0 && (
                         <div className="mono" style={{ fontSize: "0.65rem", marginTop: "0.15rem", color: "var(--text-dim)" }}>
-                          Total: {fmtMoney(d.adsRaw, currency)}
+                          Total boutiques: {fmtMoney(d.adsRaw, currency)}
                         </div>
                       )}
                       {d.adsRaw > 0 && (
@@ -530,7 +535,8 @@ function Profit() {
                     {d.roas > 0 ? d.roas.toFixed(2) : "—"}
                   </td>
                 </tr>
-              ))}
+                );
+              })}
               {total && (
                 <tr style={{ background: "rgba(200, 165, 90, 0.15)", fontWeight: 600, borderTop: "2px solid var(--accent)" }}>
                   <td style={{ position: "sticky", left: 0, background: "rgba(200, 165, 90, 0.15)", color: "var(--accent)" }}>TOTAL</td>

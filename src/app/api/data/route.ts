@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import {
   getShopData,
   saveShopData,
-  listInstalledShops,
+  listActiveShops,
   mirrorConfigToAllShops,
 } from "@/lib/storage";
 import { SHOP_COOKIE, ALL_SHOPS, MASTER_SHOP, SHARED_CONFIG_FIELDS } from "@/lib/config";
@@ -16,7 +16,7 @@ export async function GET(request: NextRequest) {
 
   // ALL mode — aggregate: config from master shop, dailyAds merged from all shops
   if (shop === ALL_SHOPS) {
-    const all = await listInstalledShops();
+    const all = await listActiveShops();
     const master = await getShopData(MASTER_SHOP);
     if (!master) {
       return NextResponse.json(
