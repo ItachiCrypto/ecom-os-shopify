@@ -104,7 +104,7 @@ function ROAS() {
       {/* Params bar */}
       <div className="card" style={{ marginBottom: "1.5rem" }}>
         <div style={{ fontSize: "0.9rem", fontWeight: 500, marginBottom: "0.75rem" }}>Paramètres</div>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: "0.75rem" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: "0.75rem" }}>
           <div>
             <label style={{ fontSize: "0.7rem", color: "var(--text-dim)", textTransform: "uppercase" }}>Shopify %</label>
             <input className="input mono" type="number" step="0.01" value={config.shopifyPct}
@@ -140,7 +140,7 @@ function ROAS() {
       {scenarios.map((s) => (
         <div key={s.id} className="card" style={{ marginBottom: "1rem" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "start", marginBottom: "1rem", gap: "1rem" }}>
-            <div style={{ flex: 1, display: "grid", gridTemplateColumns: "2fr 1fr 1fr 1fr", gap: "0.75rem" }}>
+            <div style={{ flex: 1, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: "0.75rem" }}>
               <input className="input" placeholder="Nom du produit" value={s.productName}
                 onChange={(e) => update(arr => arr.map(x => x.id === s.id ? { ...x, productName: e.target.value } : x))} />
               <div>

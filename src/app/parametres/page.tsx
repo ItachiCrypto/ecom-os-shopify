@@ -99,7 +99,7 @@ function Parametres() {
           <div style={{ fontSize: "1.05rem", fontWeight: 600, marginBottom: "0.75rem", color: "var(--blue)" }}>
             🔗 Données Shopify (auto)
           </div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "0.75rem", fontSize: "0.85rem" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: "0.75rem", fontSize: "0.85rem" }}>
             <div><div style={{ color: "var(--text-dim)" }}>Boutique</div><div style={{ fontWeight: 500 }}>{shopInfo.name}</div></div>
             <div><div style={{ color: "var(--text-dim)" }}>Domaine</div><div className="mono">{shopInfo.myshopifyDomain}</div></div>
             <div><div style={{ color: "var(--text-dim)" }}>Currency</div><div className="mono accent">{shopInfo.currencyCode}</div></div>
@@ -141,7 +141,7 @@ function Parametres() {
         </div>
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem" }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(360px, 100%), 1fr))", gap: "1rem" }}>
         <div className="card">
           <div style={{ fontSize: "1.05rem", fontWeight: 600, marginBottom: "0.25rem" }}>Fiscalité (France)</div>
           <div style={{ fontSize: "0.75rem", color: "var(--text-dim)", marginBottom: "0.75rem" }}>

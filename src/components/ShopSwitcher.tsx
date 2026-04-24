@@ -41,11 +41,12 @@ export default function ShopSwitcher({ currentShopName }: { currentShopName?: st
     });
     if (res.ok) {
       window.location.href = "/";
-    } else {
-      setSwitching(null);
-      const j = await res.json().catch(() => ({}));
-      alert(j.error || "Switch failed");
+      return;
     }
+
+    setSwitching(null);
+    const j = await res.json().catch(() => ({}));
+    alert(j.error || "Switch failed");
   };
 
   const installNew = () => {
@@ -54,153 +55,103 @@ export default function ShopSwitcher({ currentShopName }: { currentShopName?: st
     window.location.href = `/api/auth?shop=${encodeURIComponent(full)}`;
   };
 
-  const current = shops?.find((s) => s.active);
+  const current = shops?.find((shop) => shop.active);
+  const allShop = shops?.find((shop) => shop.shop === "__all__");
 
   return (
     <div ref={ref} style={{ position: "relative" }}>
       <button
-        onClick={() => setOpen((o) => !o)}
+        className="btn"
+        onClick={() => setOpen((value) => !value)}
         style={{
           width: "100%",
           textAlign: "left",
-          background: "var(--bg-elevated)",
-          border: "1px solid var(--border-strong)",
-          borderRadius: 8,
-          padding: "0.5rem 0.65rem",
-          color: "var(--text)",
-          cursor: "pointer",
+          padding: "0.55rem 0.65rem",
           display: "flex",
           alignItems: "center",
           justifyContent: "space-between",
           gap: "0.5rem",
-          fontSize: "0.85rem",
-          fontFamily: "inherit",
         }}
       >
         <span style={{ display: "flex", alignItems: "center", gap: "0.5rem", overflow: "hidden" }}>
-          <span style={{ fontSize: "0.95rem" }}>🏪</span>
+          <span className="icon" style={{ width: "1.7rem", minWidth: "1.7rem" }}>SHOP</span>
           <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-            {current?.name || currentShopName || "Boutique…"}
+            {current?.name || currentShopName || "Boutique..."}
           </span>
         </span>
-        <span style={{ fontSize: "0.7rem", color: "var(--text-dim)" }}>▾</span>
+        <span style={{ fontSize: "0.72rem", color: "var(--text-dim)" }}>v</span>
       </button>
 
       {open && (
         <div
           style={{
             position: "absolute",
-            top: "calc(100% + 6px)",
+            top: "calc(100% + 8px)",
             left: 0,
             right: 0,
             zIndex: 100,
             background: "var(--bg-card)",
             border: "1px solid var(--border-strong)",
-            borderRadius: 10,
-            padding: "0.4rem",
-            boxShadow: "0 8px 24px rgba(0,0,0,0.4)",
+            borderRadius: 8,
+            padding: "0.45rem",
+            boxShadow: "var(--shadow)",
             maxHeight: "60vh",
             overflowY: "auto",
           }}
         >
           <div style={{ fontSize: "0.65rem", color: "var(--text-faint)", padding: "0.3rem 0.5rem", textTransform: "uppercase", letterSpacing: "0.05em" }}>
-            Boutiques installées
+            Boutiques installees
           </div>
+
           {shops === null && (
-            <div style={{ padding: "0.5rem", fontSize: "0.8rem", color: "var(--text-dim)" }}>Chargement…</div>
+            <div style={{ padding: "0.5rem", fontSize: "0.8rem", color: "var(--text-dim)" }}>Chargement...</div>
           )}
           {shops?.length === 0 && (
             <div style={{ padding: "0.5rem", fontSize: "0.8rem", color: "var(--text-faint)" }}>Aucune boutique</div>
           )}
+
           {shops && shops.length > 1 && (
             <button
-              onClick={() => !shops.find((s) => s.shop === "__all__")?.active && switchTo("__all__")}
+              className={`switcher-option ${allShop?.active ? "active" : ""}`}
+              onClick={() => !allShop?.active && switchTo("__all__")}
               disabled={switching === "__all__"}
-              style={{
-                width: "100%",
-                textAlign: "left",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "space-between",
-                gap: "0.5rem",
-                padding: "0.5rem 0.6rem",
-                background: shops.find((s) => s.shop === "__all__")?.active
-                  ? "var(--bg-elevated)"
-                  : "transparent",
-                border: "none",
-                borderRadius: 6,
-                color: shops.find((s) => s.shop === "__all__")?.active
-                  ? "var(--accent)"
-                  : "var(--text)",
-                cursor: "pointer",
-                fontFamily: "inherit",
-                fontSize: "0.85rem",
-                borderBottom: "1px solid var(--border)",
-                marginBottom: "0.25rem",
-              }}
-              onMouseEnter={(e) => {
-                if (!shops.find((s) => s.shop === "__all__")?.active)
-                  e.currentTarget.style.background = "var(--bg-elevated)";
-              }}
-              onMouseLeave={(e) => {
-                if (!shops.find((s) => s.shop === "__all__")?.active)
-                  e.currentTarget.style.background = "transparent";
-              }}
             >
               <div style={{ display: "flex", flexDirection: "column", overflow: "hidden" }}>
-                <span style={{ fontWeight: 600 }}>🌐 Toutes les boutiques</span>
+                <span style={{ fontWeight: 600 }}>Toutes les boutiques</span>
                 <span style={{ fontSize: "0.7rem", color: "var(--text-dim)" }}>
-                  {shops.length} boutiques agrégées
+                  {shops.length} boutiques agregees
                 </span>
               </div>
-              {shops.find((s) => s.shop === "__all__")?.active && (
-                <span style={{ fontSize: "0.7rem", color: "var(--green)" }}>● ACTIVE</span>
-              )}
+              {allShop?.active && <span className="status-dot">ACTIVE</span>}
             </button>
           )}
-          {shops?.map((s) => (
+
+          {shops?.map((shop) => (
             <button
-              key={s.shop}
-              onClick={() => !s.active && switchTo(s.shop)}
-              disabled={s.active || switching === s.shop}
-              style={{
-                width: "100%",
-                textAlign: "left",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "space-between",
-                gap: "0.5rem",
-                padding: "0.5rem 0.6rem",
-                background: s.active ? "var(--bg-elevated)" : "transparent",
-                border: "none",
-                borderRadius: 6,
-                color: s.active ? "var(--accent)" : "var(--text)",
-                cursor: s.active ? "default" : "pointer",
-                fontFamily: "inherit",
-                fontSize: "0.85rem",
-                opacity: switching === s.shop ? 0.5 : 1,
-              }}
-              onMouseEnter={(e) => { if (!s.active) e.currentTarget.style.background = "var(--bg-elevated)"; }}
-              onMouseLeave={(e) => { if (!s.active) e.currentTarget.style.background = "transparent"; }}
+              key={shop.shop}
+              className={`switcher-option ${shop.active ? "active" : ""}`}
+              onClick={() => !shop.active && switchTo(shop.shop)}
+              disabled={shop.active || switching === shop.shop}
+              style={{ opacity: switching === shop.shop ? 0.55 : 1 }}
             >
               <div style={{ display: "flex", flexDirection: "column", overflow: "hidden" }}>
                 <span style={{ fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                  {s.name}
+                  {shop.name}
                 </span>
                 <span className="mono" style={{ fontSize: "0.7rem", color: "var(--text-dim)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                  {s.shop}
+                  {shop.shop}
                 </span>
               </div>
-              {s.active && <span style={{ fontSize: "0.7rem", color: "var(--green)" }}>● ACTIVE</span>}
-              {switching === s.shop && <span style={{ fontSize: "0.7rem", color: "var(--blue)" }}>…</span>}
+              {shop.active && <span className="status-dot">ACTIVE</span>}
+              {switching === shop.shop && <span style={{ fontSize: "0.72rem", color: "var(--blue)" }}>...</span>}
             </button>
           ))}
 
-          <div style={{ borderTop: "1px solid var(--border)", marginTop: "0.35rem", paddingTop: "0.4rem" }}>
+          <div style={{ borderTop: "1px solid var(--border)", marginTop: "0.35rem", paddingTop: "0.45rem" }}>
             <div style={{ fontSize: "0.65rem", color: "var(--text-faint)", padding: "0.2rem 0.5rem", textTransform: "uppercase", letterSpacing: "0.05em" }}>
               Ajouter une boutique
             </div>
-            <div style={{ display: "flex", gap: "0.3rem", padding: "0.3rem 0.4rem" }}>
+            <div style={{ display: "flex", gap: "0.35rem", padding: "0.3rem 0.4rem" }}>
               <input
                 className="input"
                 placeholder="shop.myshopify.com"

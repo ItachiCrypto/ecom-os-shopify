@@ -54,7 +54,6 @@ function Profit() {
   const [data, setData] = useState<ShopData | null>(null);
   const [currency, setCurrency] = useState("USD");
   const [dirty, setDirty] = useState(false);
-  const [saving, setSaving] = useState(false);
   const [isAllMode, setIsAllMode] = useState(false);
   const { range } = useDateRangeCtx();
 
@@ -74,7 +73,6 @@ function Profit() {
   // Debounced save on dirty
   useEffect(() => {
     if (!dirty || !data) return;
-    setSaving(true);
     const t = setTimeout(async () => {
       await fetch("/api/data", {
         method: "POST",
@@ -82,7 +80,6 @@ function Profit() {
         body: JSON.stringify({ config: data.config }),
       });
       setDirty(false);
-      setSaving(false);
     }, 300);
     return () => clearTimeout(t);
   }, [dirty, data]);
@@ -306,7 +303,7 @@ function Profit() {
           <h1 style={{ fontSize: "1.75rem", fontWeight: 600, margin: 0 }}>Profit Journalier</h1>
           <div style={{ color: "var(--text-dim)", fontSize: "0.875rem", marginTop: "0.25rem" }}>
             Période <span className="accent">{range.label}</span> · {days.length} jours · {total?.orders || 0} commandes
-            {saving && <span style={{ marginLeft: "0.75rem", color: "var(--blue)" }}>💾 Sauvegarde...</span>}
+            {dirty && <span style={{ marginLeft: "0.75rem", color: "var(--blue)" }}>Sauvegarde...</span>}
           </div>
         </div>
       </div>
@@ -336,7 +333,7 @@ function Profit() {
 
       {/* Summary KPIs */}
       {total && (
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: "0.75rem", marginBottom: "1rem" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: "0.75rem", marginBottom: "1rem" }}>
           <div className="kpi">
             <div className="kpi-label">Total Sales</div>
             <div className="kpi-value accent">{fmtMoney(total.sales, currency)}</div>

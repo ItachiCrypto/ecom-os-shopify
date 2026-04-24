@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useDateRangeCtx } from "./DateRangeContext";
 import type { DateRangePreset } from "@/hooks/useDateRange";
 
@@ -11,8 +11,8 @@ const PRESETS: { id: DateRangePreset; label: string }[] = [
   { id: "90d", label: "90 derniers jours" },
   { id: "thisMonth", label: "Ce mois-ci" },
   { id: "lastMonth", label: "Mois dernier" },
-  { id: "thisYear", label: "Cette année" },
-  { id: "sinceShopStart", label: "Depuis début boutique" },
+  { id: "thisYear", label: "Cette annee" },
+  { id: "sinceShopStart", label: "Depuis debut boutique" },
   { id: "all", label: "Tout l'historique" },
 ];
 
@@ -22,11 +22,6 @@ export default function DateRangePicker() {
   const [customFrom, setCustomFrom] = useState(range.from);
   const [customTo, setCustomTo] = useState(range.to);
   const ref = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    setCustomFrom(range.from);
-    setCustomTo(range.to);
-  }, [range.from, range.to]);
 
   useEffect(() => {
     const onClick = (e: MouseEvent) => {
@@ -41,8 +36,8 @@ export default function DateRangePicker() {
     setOpen(false);
   };
 
-  const fmtShort = (iso: string) => {
-    const d = new Date(iso + "T12:00:00");
+  const fmtShort = (date: string) => {
+    const d = new Date(date + "T12:00:00");
     return d.toLocaleDateString("fr-FR", { day: "2-digit", month: "short", year: "numeric" });
   };
 
@@ -50,21 +45,30 @@ export default function DateRangePicker() {
     <div ref={ref} style={{ position: "relative", display: "inline-block" }}>
       <button
         className="btn"
-        onClick={() => setOpen((o) => !o)}
+        onClick={() => {
+          if (!open) {
+            setCustomFrom(range.from);
+            setCustomTo(range.to);
+          }
+          setOpen((value) => !value);
+        }}
         style={{
           display: "flex",
           alignItems: "center",
           gap: "0.5rem",
-          minWidth: 220,
+          minWidth: 260,
           justifyContent: "space-between",
           borderColor: "var(--accent-dim)",
         }}
       >
-        <span style={{ display: "flex", alignItems: "center", gap: "0.4rem" }}>
-          📅 <span style={{ fontSize: "0.85rem" }}>{range.label}</span>
+        <span style={{ display: "flex", alignItems: "center", gap: "0.5rem", minWidth: 0 }}>
+          <span className="icon" style={{ width: "1.7rem", minWidth: "1.7rem" }}>DR</span>
+          <span style={{ fontSize: "0.85rem", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {range.label}
+          </span>
         </span>
-        <span style={{ fontSize: "0.7rem", color: "var(--text-dim)", fontFamily: "JetBrains Mono, monospace" }}>
-          {fmtShort(range.from)} → {fmtShort(range.to)}
+        <span style={{ fontSize: "0.7rem", color: "var(--text-dim)", fontFamily: "JetBrains Mono, monospace", whiteSpace: "nowrap" }}>
+          {fmtShort(range.from)} - {fmtShort(range.to)}
         </span>
       </button>
 
@@ -72,43 +76,46 @@ export default function DateRangePicker() {
         <div
           style={{
             position: "absolute",
-            top: "calc(100% + 6px)",
+            top: "calc(100% + 8px)",
             right: 0,
             zIndex: 1000,
             background: "var(--bg-card)",
             border: "1px solid var(--border-strong)",
-            borderRadius: 10,
+            borderRadius: 8,
             padding: "0.5rem",
-            minWidth: 280,
-            boxShadow: "0 8px 24px rgba(0,0,0,0.4)",
+            minWidth: 300,
+            boxShadow: "var(--shadow)",
           }}
         >
           <div style={{ display: "flex", flexDirection: "column", gap: 2, marginBottom: "0.5rem" }}>
-            {PRESETS.map((p) => {
-              const disabled = p.id === "sinceShopStart" && !shopStartDate;
+            {PRESETS.map((preset) => {
+              const disabled = preset.id === "sinceShopStart" && !shopStartDate;
               return (
                 <button
-                  key={p.id}
+                  key={preset.id}
                   className="nav-item"
                   style={{
                     justifyContent: "space-between",
                     textAlign: "left",
-                    opacity: disabled ? 0.4 : 1,
+                    opacity: disabled ? 0.45 : 1,
                     cursor: disabled ? "not-allowed" : "pointer",
-                    color: range.preset === p.id ? "var(--accent)" : undefined,
-                    background: range.preset === p.id ? "var(--bg-elevated)" : undefined,
+                    color: range.preset === preset.id ? "var(--accent)" : undefined,
+                    background: range.preset === preset.id ? "var(--bg-elevated)" : undefined,
+                    border: 0,
+                    width: "100%",
+                    fontFamily: "inherit",
                   }}
                   onClick={() => {
                     if (disabled) return;
-                    setPreset(p.id);
+                    setPreset(preset.id);
                     setOpen(false);
                   }}
                   disabled={disabled}
                 >
-                  <span>{p.label}</span>
-                  {p.id === "sinceShopStart" && !shopStartDate && (
+                  <span>{preset.label}</span>
+                  {preset.id === "sinceShopStart" && !shopStartDate && (
                     <span style={{ fontSize: "0.65rem", color: "var(--text-faint)" }}>
-                      (définir dans Paramètres)
+                      definir dans Parametres
                     </span>
                   )}
                 </button>
@@ -116,30 +123,18 @@ export default function DateRangePicker() {
             })}
           </div>
 
-          <div style={{ borderTop: "1px solid var(--border)", paddingTop: "0.5rem", paddingLeft: "0.5rem", paddingRight: "0.5rem" }}>
-            <div style={{ fontSize: "0.7rem", color: "var(--text-dim)", marginBottom: "0.35rem", textTransform: "uppercase", letterSpacing: "0.05em" }}>
-              Période personnalisée
+          <div style={{ borderTop: "1px solid var(--border)", padding: "0.75rem 0.5rem 0.5rem" }}>
+            <div style={{ fontSize: "0.7rem", color: "var(--text-dim)", marginBottom: "0.5rem", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+              Periode personnalisee
             </div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.35rem", marginBottom: "0.5rem" }}>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.5rem", marginBottom: "0.75rem" }}>
               <div>
                 <label style={{ fontSize: "0.7rem", color: "var(--text-dim)" }}>Du</label>
-                <input
-                  className="input"
-                  type="date"
-                  value={customFrom}
-                  onChange={(e) => setCustomFrom(e.target.value)}
-                  style={{ fontSize: "0.8rem" }}
-                />
+                <input className="input" type="date" value={customFrom} onChange={(e) => setCustomFrom(e.target.value)} style={{ fontSize: "0.8rem" }} />
               </div>
               <div>
                 <label style={{ fontSize: "0.7rem", color: "var(--text-dim)" }}>Au</label>
-                <input
-                  className="input"
-                  type="date"
-                  value={customTo}
-                  onChange={(e) => setCustomTo(e.target.value)}
-                  style={{ fontSize: "0.8rem" }}
-                />
+                <input className="input" type="date" value={customTo} onChange={(e) => setCustomTo(e.target.value)} style={{ fontSize: "0.8rem" }} />
               </div>
             </div>
             <button className="btn btn-primary" style={{ width: "100%" }} onClick={applyCustom}>

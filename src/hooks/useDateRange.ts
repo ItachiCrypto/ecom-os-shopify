@@ -99,7 +99,9 @@ export function useDateRange(shopStartDate?: string) {
   // Recompute when shopStartDate loads async (unless custom)
   useEffect(() => {
     if (range.preset !== "custom" && shopStartDate) {
-      setRangeState((prev) => (prev.preset !== "custom" ? computeRange(prev.preset, shopStartDate) : prev));
+      queueMicrotask(() => {
+        setRangeState((prev) => (prev.preset !== "custom" ? computeRange(prev.preset, shopStartDate) : prev));
+      });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [shopStartDate]);
