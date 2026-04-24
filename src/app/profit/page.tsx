@@ -47,6 +47,14 @@ interface ShopData {
   };
 }
 
+interface ShopOption {
+  shop: string;
+  name: string;
+}
+
+type DailyAds = Record<string, { spend: number; notes?: string }>;
+type DailyAdsByShop = Record<string, DailyAds>;
+
 export default function ProfitPage() { return <Shell><Profit /></Shell>; }
 
 function Profit() {
@@ -55,6 +63,10 @@ function Profit() {
   const [currency, setCurrency] = useState("USD");
   const [dirty, setDirty] = useState(false);
   const [isAllMode, setIsAllMode] = useState(false);
+  const [shops, setShops] = useState<ShopOption[]>([]);
+  const [editableShop, setEditableShop] = useState("");
+  const [dailyAdsByShop, setDailyAdsByShop] = useState<DailyAdsByShop>({});
+  const [pendingAdSaves, setPendingAdSaves] = useState<Record<string, { shop?: string; date: string; spend: number; notes?: string }>>({});
   const { range } = useDateRangeCtx();
 
   useEffect(() => {
@@ -62,27 +74,53 @@ function Profit() {
       fetch("/api/orders?all=true").then(r => r.json()),
       fetch("/api/data").then(r => r.json()),
       fetch("/api/shop").then(r => r.ok ? r.json() : null),
-    ]).then(([o, d, s]) => {
+      fetch("/api/ad-spend").then(r => r.ok ? r.json() : null),
+    ]).then(([o, d, s, ads]) => {
       setOrders(o.orders);
       setData(d.data);
       if (s?.shop?.currencyCode) setCurrency(s.shop.currencyCode);
       if (s?.mode === "all" || s?.shop?.myshopifyDomain === "__all__") setIsAllMode(true);
+      if (ads?.shops) setShops(ads.shops);
+      if (ads?.dailyAdsByShop) setDailyAdsByShop(ads.dailyAdsByShop);
+      if (ads?.editableShop) setEditableShop(ads.editableShop);
     });
   }, []);
 
-  // Debounced save on dirty
+  const mergeDailyAds = (byShop: DailyAdsByShop): DailyAds => {
+    const merged: DailyAds = {};
+    for (const entries of Object.values(byShop)) {
+      for (const [date, entry] of Object.entries(entries || {})) {
+        merged[date] = {
+          spend: (merged[date]?.spend || 0) + (entry.spend || 0),
+          notes:
+            merged[date]?.notes && entry.notes
+              ? `${merged[date].notes} | ${entry.notes}`
+              : merged[date]?.notes || entry.notes,
+        };
+      }
+    }
+    return merged;
+  };
+
+  // Debounced save on daily ad spend edits
   useEffect(() => {
-    if (!dirty || !data) return;
+    const saves = Object.values(pendingAdSaves);
+    if (!dirty || saves.length === 0) return;
     const t = setTimeout(async () => {
-      await fetch("/api/data", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ config: data.config }),
-      });
+      await Promise.all(
+        saves.map((save) =>
+          fetch("/api/ad-spend", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(save),
+          })
+        )
+      );
       setDirty(false);
+      setPendingAdSaves({});
     }, 300);
     return () => clearTimeout(t);
-  }, [dirty, data]);
+  }, [dirty, pendingAdSaves]);
 
   // Compute daily rows within the selected range
   const { days, total, activeVariants } = useMemo(() => {
@@ -258,6 +296,24 @@ function Profit() {
 
   const updateAdSpend = (date: string, spend: number, notes?: string) => {
     if (!data) return;
+    const targetShop = editableShop || shops[0]?.shop;
+
+    if (isAllMode && targetShop) {
+      const currentForShop = dailyAdsByShop[targetShop] || {};
+      const nextForShop = { ...currentForShop };
+      if (spend === 0 && !notes) {
+        delete nextForShop[date];
+      } else {
+        nextForShop[date] = { spend, ...(notes !== undefined ? { notes } : {}) };
+      }
+      const nextByShop = { ...dailyAdsByShop, [targetShop]: nextForShop };
+      setDailyAdsByShop(nextByShop);
+      setData({ ...data, config: { ...data.config, dailyAds: mergeDailyAds(nextByShop) } });
+      setPendingAdSaves((prev) => ({ ...prev, [`${targetShop}:${date}`]: { shop: targetShop, date, spend, notes } }));
+      setDirty(true);
+      return;
+    }
+
     const current = data.config.dailyAds || {};
     const next = { ...current };
     if (spend === 0 && !notes) {
@@ -266,6 +322,7 @@ function Profit() {
       next[date] = { spend, ...(notes !== undefined ? { notes } : {}) };
     }
     setData({ ...data, config: { ...data.config, dailyAds: next } });
+    setPendingAdSaves((prev) => ({ ...prev, [date]: { date, spend, notes } }));
     setDirty(true);
   };
 
@@ -320,13 +377,28 @@ function Profit() {
 
       {isAllMode && (
         <div className="card" style={{ borderColor: "var(--blue)", background: "rgba(96, 165, 250, 0.05)", marginBottom: "1rem" }}>
-          <div style={{ fontWeight: 500, marginBottom: "0.25rem", color: "var(--blue)" }}>
-            🌐 Mode &quot;Toutes les boutiques&quot;
-          </div>
-          <div style={{ fontSize: "0.85rem", color: "var(--text-dim)", lineHeight: 1.5 }}>
-            Les Meta Ads affichés sont la <b>somme</b> des spends de chaque boutique. Pour <b>éditer</b>
-            le spend d&apos;une journée, switch sur la boutique concernée via le sélecteur en haut à gauche.
-            Les inputs sont en lecture seule ici pour éviter les doublons.
+          <div style={{ display: "flex", justifyContent: "space-between", gap: "1rem", alignItems: "center", flexWrap: "wrap" }}>
+            <div>
+              <div style={{ fontWeight: 500, marginBottom: "0.25rem", color: "var(--blue)" }}>
+                Mode &quot;Toutes les boutiques&quot;
+              </div>
+              <div style={{ fontSize: "0.85rem", color: "var(--text-dim)", lineHeight: 1.5 }}>
+                Les totaux Meta Ads restent agreges. Les inputs ci-dessous modifient le spend HT de la boutique selectionnee, jour par jour.
+              </div>
+            </div>
+            <label style={{ minWidth: 240, fontSize: "0.75rem", color: "var(--text-dim)", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+              Boutique a editer
+              <select
+                className="select"
+                value={editableShop}
+                onChange={(event) => setEditableShop(event.target.value)}
+                style={{ marginTop: "0.35rem" }}
+              >
+                {shops.map((shop) => (
+                  <option key={shop.shop} value={shop.shop}>{shop.name}</option>
+                ))}
+              </select>
+            </label>
           </div>
         </div>
       )}
@@ -386,7 +458,7 @@ function Profit() {
                 <th style={{ position: "sticky", left: 0, background: "var(--bg-elevated)", zIndex: 1 }}>Date</th>
                 <th style={{ textAlign: "center" }}>Orders</th>
                 <th style={{ textAlign: "right", background: "rgba(248, 113, 113, 0.15)", color: "var(--red)" }}>
-                  <div>Meta Ads (TTC)</div>
+                  <div>Meta Ads (HT)</div>
                   <div style={{ fontSize: "0.65rem", opacity: 0.8, fontWeight: 400 }}>
                     +{taxOnAdSpendPct}% TVA
                   </div>
@@ -415,21 +487,20 @@ function Profit() {
                   <td style={{ textAlign: "center", color: "var(--text-dim)" }}>{d.orders || "—"}</td>
                   <td style={{ textAlign: "right" }}>
                     <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end" }}>
-                      {isAllMode ? (
-                        <div className="mono" style={{ textAlign: "right", fontSize: "0.85rem", color: d.adsRaw > 0 ? "var(--red)" : "var(--text-dim)" }}>
-                          {d.adsRaw > 0 ? fmtMoney(d.adsRaw, currency) : "—"}
+                      <input
+                        type="number"
+                        step="0.01"
+                        className="input mono"
+                        value={(isAllMode ? dailyAdsByShop[editableShop]?.[d.date]?.spend : d.adsRaw) || ""}
+                        onChange={(e) => updateAdSpend(d.date, parseFloat(e.target.value) || 0, d.notes)}
+                        placeholder="0 (HT)"
+                        style={{ maxWidth: 100, textAlign: "right", fontSize: "0.8rem" }}
+                        title="Saisis le montant HT - le TTC est calcule automatiquement"
+                      />
+                      {isAllMode && d.adsRaw > 0 && (
+                        <div className="mono" style={{ fontSize: "0.65rem", marginTop: "0.15rem", color: "var(--text-dim)" }}>
+                          Total: {fmtMoney(d.adsRaw, currency)}
                         </div>
-                      ) : (
-                        <input
-                          type="number"
-                          step="0.01"
-                          className="input mono"
-                          value={d.adsRaw || ""}
-                          onChange={(e) => updateAdSpend(d.date, parseFloat(e.target.value) || 0, d.notes)}
-                          placeholder="0 (HT)"
-                          style={{ maxWidth: 90, textAlign: "right", fontSize: "0.8rem" }}
-                          title="Saisis le montant HT — le TTC est calculé automatiquement"
-                        />
                       )}
                       {d.adsRaw > 0 && (
                         <div className="mono red" style={{ fontSize: "0.65rem", marginTop: "0.15rem", opacity: 0.8 }}>
