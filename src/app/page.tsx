@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import Shell from "@/components/Shell";
 import { fmtMoney, getRealFees, hasRealFeeData } from "@/lib/order-utils";
 import type { Transaction } from "@/lib/order-utils";
@@ -61,6 +61,33 @@ interface ShopData {
     dailyAds?: Record<string, { spend: number; notes?: string }>;
     shippingCostByQty?: Record<string, number>;
   };
+}
+
+const USD_PER_EUR = 1.19;
+
+function fmtEur(amountUsd: number): string {
+  return fmtMoney(amountUsd / USD_PER_EUR, "EUR");
+}
+
+function MoneyStack({
+  amount,
+  currency,
+  className,
+  style,
+  prefix = "",
+}: {
+  amount: number;
+  currency: string;
+  className?: string;
+  style?: CSSProperties;
+  prefix?: string;
+}) {
+  return (
+    <>
+      <div className={className} style={style}>{prefix}{fmtMoney(amount, currency)}</div>
+      <div className="kpi-delta">EUR: {prefix}{fmtEur(amount)}</div>
+    </>
+  );
 }
 
 export default function DashboardPage() {
@@ -290,7 +317,7 @@ function Dashboard() {
         <div>
           <h1 style={{ fontSize: "1.75rem", fontWeight: 600, margin: 0 }}>Dashboard</h1>
           <div style={{ color: "var(--text-dim)", fontSize: "0.875rem", marginTop: "0.25rem" }}>
-            Période <span className="accent">{range.label}</span> · {stats.totalOrders} commandes · {currency} · Heure boutique {timeZone}
+            Période <span className="accent">{range.label}</span> · {stats.totalOrders} commandes · {currency} · EUR au taux 1 EUR = 1.19 USD · Heure boutique {timeZone}
             {stats.ordersWithFeeData > 0 && (
               <> · <span style={{ color: "var(--green)" }}>{stats.ordersWithFeeData} avec vrais frais Shopify</span></>
             )}
@@ -311,53 +338,49 @@ function Dashboard() {
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: "1rem", marginBottom: "1.5rem" }}>
         <div className="kpi">
           <div className="kpi-label">Solde actuel</div>
-          <div className={`kpi-value ${stats.solde > 0 ? "green" : "red"}`}>
-            {fmtMoney(stats.solde, currency)}
-          </div>
+          <MoneyStack amount={stats.solde} currency={currency} className={`kpi-value ${stats.solde > 0 ? "green" : "red"}`} />
           <div className="kpi-delta">
-            Profit net: <span className={stats.profitNet >= 0 ? "green" : "red"}>{fmtMoney(stats.profitNet, currency)}</span>
+            Profit net: <span className={stats.profitNet >= 0 ? "green" : "red"}>{fmtMoney(stats.profitNet, currency)} / {fmtEur(stats.profitNet)}</span>
           </div>
         </div>
 
         <div className="kpi">
           <div className="kpi-label">Total Sales</div>
-          <div className="kpi-value accent">{fmtMoney(stats.totalSales, currency)}</div>
+          <MoneyStack amount={stats.totalSales} currency={currency} className="kpi-value accent" />
           <div className="kpi-delta">{stats.totalOrders} commandes</div>
         </div>
 
         <div className="kpi">
           <div className="kpi-label">COGS</div>
-          <div className="kpi-value orange">{fmtMoney(stats.totalCogs, currency)}</div>
+          <MoneyStack amount={stats.totalCogs} currency={currency} className="kpi-value orange" />
           <div className="kpi-delta">incl. shipping + gifts</div>
         </div>
 
         <div className="kpi">
           <div className="kpi-label">Meta Ads TTC</div>
-          <div className="kpi-value red">{fmtMoney(stats.totalAdsTTC, currency)}</div>
-          <div className="kpi-delta">HT: {fmtMoney(stats.totalAdsHT, currency)} +{stats.taxOnAdSpend}% TVA</div>
+          <MoneyStack amount={stats.totalAdsTTC} currency={currency} className="kpi-value red" />
+          <div className="kpi-delta">HT: {fmtMoney(stats.totalAdsHT, currency)} / {fmtEur(stats.totalAdsHT)} +{stats.taxOnAdSpend}% TVA</div>
         </div>
 
         <div className="kpi">
           <div className="kpi-label">Taxes</div>
-          <div className="kpi-value" style={{ color: "var(--purple)" }}>
-            {fmtMoney(stats.totalTaxes, currency)}
-          </div>
+          <MoneyStack amount={stats.totalTaxes} currency={currency} className="kpi-value" style={{ color: "var(--purple)" }} />
           <div className="kpi-delta">{stats.totalTaxOnSalesRate.toFixed(2)}% sur Sales</div>
         </div>
 
         <div className="kpi">
           <div className="kpi-label">Frais fixes</div>
-          <div className="kpi-value red">{fmtMoney(stats.fixedCosts, currency)}</div>
+          <MoneyStack amount={stats.fixedCosts} currency={currency} className="kpi-value red" />
           <div className="kpi-delta">
-            Shopify: {fmtMoney(stats.shopifyFixedFees, currency)} / Abos: {fmtMoney(stats.subscriptionFees, currency)}
+            Shopify: {fmtMoney(stats.shopifyFixedFees, currency)} / {fmtEur(stats.shopifyFixedFees)}
+            <br />
+            Abos: {fmtMoney(stats.subscriptionFees, currency)} / {fmtEur(stats.subscriptionFees)}
           </div>
         </div>
 
         <div className="kpi">
           <div className="kpi-label">Profit Net</div>
-          <div className={`kpi-value ${stats.profitNet >= 0 ? "green" : "red"}`}>
-            {fmtMoney(stats.profitNet, currency)}
-          </div>
+          <MoneyStack amount={stats.profitNet} currency={currency} className={`kpi-value ${stats.profitNet >= 0 ? "green" : "red"}`} />
           <div className="kpi-delta">{stats.profitNetPct.toFixed(1)}%</div>
         </div>
 
@@ -382,17 +405,17 @@ function Dashboard() {
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: "1rem", marginBottom: "1.5rem" }}>
         <div className="kpi">
           <div className="kpi-label">CA Aujourd&apos;hui</div>
-          <div className="kpi-value accent">{fmtMoney(stats.caToday, currency)}</div>
-          <div className="kpi-delta">{stats.ordersToday} commande{stats.ordersToday > 1 ? "s" : ""} · Ads: {fmtMoney(stats.adsToday, currency)}</div>
+          <MoneyStack amount={stats.caToday} currency={currency} className="kpi-value accent" />
+          <div className="kpi-delta">{stats.ordersToday} commande{stats.ordersToday > 1 ? "s" : ""} · Ads: {fmtMoney(stats.adsToday, currency)} / {fmtEur(stats.adsToday)}</div>
         </div>
         <div className="kpi">
           <div className="kpi-label">CA 7 jours</div>
-          <div className="kpi-value blue">{fmtMoney(stats.caWeek, currency)}</div>
+          <MoneyStack amount={stats.caWeek} currency={currency} className="kpi-value blue" />
           <div className="kpi-delta">{stats.ordersWeek} commandes</div>
         </div>
         <div className="kpi">
           <div className="kpi-label">CA 30 jours</div>
-          <div className="kpi-value blue">{fmtMoney(stats.caMonth, currency)}</div>
+          <MoneyStack amount={stats.caMonth} currency={currency} className="kpi-value blue" />
           <div className="kpi-delta">{stats.ordersMonth} commandes</div>
         </div>
         <div className="kpi">
@@ -410,7 +433,10 @@ function Dashboard() {
           <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "0.5rem" }}>
             <div style={{ fontSize: "0.9rem", fontWeight: 500 }}>Objectif CA / semaine</div>
             <div className="mono" style={{ fontSize: "0.85rem", color: "var(--text-dim)" }}>
-              {fmtMoney(stats.caWeek, currency)} / {fmtMoney(data!.config.objectifCA, currency)}
+              <div>{fmtMoney(stats.caWeek, currency)} / {fmtMoney(data!.config.objectifCA, currency)}</div>
+              <div style={{ color: "var(--text-faint)", fontSize: "0.75rem", marginTop: "0.15rem" }}>
+                EUR: {fmtEur(stats.caWeek)} / {fmtEur(data!.config.objectifCA)}
+              </div>
             </div>
           </div>
           <div className="progress">
@@ -461,10 +487,20 @@ function Dashboard() {
                       </span>
                     </td>
                     <td className="mono" style={{ textAlign: "right", fontWeight: 500 }}>
-                      {fmtMoney(parseFloat(o.currentTotalPriceSet.shopMoney.amount), currency)}
+                      <div>{fmtMoney(parseFloat(o.currentTotalPriceSet.shopMoney.amount), currency)}</div>
+                      <div style={{ fontSize: "0.72rem", color: "var(--text-dim)", fontWeight: 400 }}>
+                        {fmtEur(parseFloat(o.currentTotalPriceSet.shopMoney.amount))}
+                      </div>
                     </td>
                     <td className="mono red" style={{ textAlign: "right", fontSize: "0.85rem" }}>
-                      {fees > 0 ? `-${fmtMoney(fees, currency)}` : "—"}
+                      {fees > 0 ? (
+                        <>
+                          <div>-{fmtMoney(fees, currency)}</div>
+                          <div style={{ fontSize: "0.72rem", color: "var(--text-dim)", fontWeight: 400 }}>
+                            -{fmtEur(fees)}
+                          </div>
+                        </>
+                      ) : "—"}
                     </td>
                   </tr>
                 );
