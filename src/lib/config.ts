@@ -102,6 +102,8 @@ export const SHARED_CONFIG_FIELDS = [
   "alerteLivraison",
   "shopStartDate",
   "taxOnAdSpend",
+  "shopifyFixedFeePerOrder",
+  "monthlySubscriptions",
   "shippingCostByQty",
   "bundles",
 ] as const;

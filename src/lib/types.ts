@@ -72,6 +72,13 @@ export interface Bundle {
   active: boolean;
 }
 
+export interface MonthlySubscription {
+  id: string;
+  name: string;
+  monthlyAmount: number;
+  active: boolean;
+}
+
 export interface EcomConfig {
   shopifyPct: number;
   shopifyFixe: number;
@@ -90,6 +97,10 @@ export interface EcomConfig {
   shopStartDate?: string;
   // Tax applied on ad spend (e.g. Meta VAT in Ireland = ~5%)
   taxOnAdSpend?: number;
+  // Fixed fee charged per order (e.g. Shopify fixed fee, independent from real payment fees)
+  shopifyFixedFeePerOrder?: number;
+  // Monthly subscriptions prorated daily in profit calculations
+  monthlySubscriptions?: MonthlySubscription[];
   // COGS per variant (key: variant ID)
   productCosts?: Record<string, ProductCost>;
   // Bundles (e.g. "ring + free lube") — extra items that ship with each trigger variant sold
@@ -211,6 +222,8 @@ export const DEFAULT_CONFIG: EcomConfig = {
   alerteRunway: 7,
   alerteLivraison: {},
   taxOnAdSpend: 5, // Default 5% (Meta/FB VAT)
+  shopifyFixedFeePerOrder: 0,
+  monthlySubscriptions: [],
   productCosts: {},
   bundles: [],
   dailyAds: {},

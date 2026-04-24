@@ -5,7 +5,7 @@ import Shell from "@/components/Shell";
 import { fmtMoney } from "@/lib/order-utils";
 import { useDateRangeCtx } from "@/components/DateRangeContext";
 import { addDaysIso, formatIsoDate, inRange, isoInTimeZone } from "@/hooks/useDateRange";
-import type { ProductCost, Bundle } from "@/lib/types";
+import type { ProductCost, Bundle, MonthlySubscription } from "@/lib/types";
 
 interface Money { shopMoney: { amount: string; currencyCode: string } }
 interface Variant {
@@ -40,6 +40,8 @@ interface ShopData {
     ir: number;
     tva: number;
     taxOnAdSpend?: number;
+    shopifyFixedFeePerOrder?: number;
+    monthlySubscriptions?: MonthlySubscription[];
     productCosts?: Record<string, ProductCost>;
     bundles?: Bundle[];
     dailyAds?: Record<string, { spend: number; notes?: string }>;
@@ -130,6 +132,12 @@ function Profit() {
     const bundles = (data.config.bundles || []).filter((b) => b.active);
     const dailyAds = data.config.dailyAds || {};
     const taxPct = data.config.taxOnAdSpend ?? 5;
+    const shopifyFixedFeePerOrder = data.config.shopifyFixedFeePerOrder ?? 0;
+    const monthlySubscriptions = data.config.monthlySubscriptions || [];
+    const activeMonthlySubscriptions = monthlySubscriptions
+      .filter((s) => s.active)
+      .reduce((sum, s) => sum + (Number(s.monthlyAmount) || 0), 0);
+    const dailySubscriptionCost = activeMonthlySubscriptions / 30.6;
     const urssaf = data.config.urssaf || 0;
     const ir = data.config.ir || 0;
     const tva = data.config.tva || 0;
@@ -234,7 +242,10 @@ function Profit() {
         const profitBrutPct = d.sales > 0 ? (profitBrut / d.sales) * 100 : 0;
         // Taxes on sales: URSSAF + IR + TVA (from Fiscalité section)
         const taxes = (d.sales * totalTaxRate) / 100;
-        const profitNet = profitBrut - taxes;
+        const shopifyFixedFees = d.orders * shopifyFixedFeePerOrder;
+        const subscriptionFees = dailySubscriptionCost;
+        const fixedCosts = shopifyFixedFees + subscriptionFees;
+        const profitNet = profitBrut - taxes - fixedCosts;
         const profitNetPct = d.sales > 0 ? (profitNet / d.sales) * 100 : 0;
         const roas = adsRaw > 0 ? d.sales / adsRaw : 0;
         return {
@@ -242,6 +253,9 @@ function Profit() {
           adsRaw,
           adsWithTax,
           taxes,
+          fixedCosts,
+          shopifyFixedFees,
+          subscriptionFees,
           profitBrut,
           profitBrutPct,
           profitNet,
@@ -259,6 +273,9 @@ function Profit() {
         acc.adsRaw += d.adsRaw;
         acc.adsWithTax += d.adsWithTax;
         acc.taxes += d.taxes;
+        acc.fixedCosts += d.fixedCosts;
+        acc.shopifyFixedFees += d.shopifyFixedFees;
+        acc.subscriptionFees += d.subscriptionFees;
         acc.profitBrut += d.profitBrut;
         acc.profitNet += d.profitNet;
         activeVariants.forEach((v) => {
@@ -273,6 +290,9 @@ function Profit() {
         adsRaw: 0,
         adsWithTax: 0,
         taxes: 0,
+        fixedCosts: 0,
+        shopifyFixedFees: 0,
+        subscriptionFees: 0,
         profitBrut: 0,
         profitNet: 0,
         qtyByVariant: {} as Record<string, number>,
@@ -424,6 +444,13 @@ function Profit() {
             <div className="kpi-delta">{totalTaxOnSalesPct}% sur Sales</div>
           </div>
           <div className="kpi">
+            <div className="kpi-label">Frais fixes</div>
+            <div className="kpi-value red">{fmtMoney(total.fixedCosts, currency)}</div>
+            <div className="kpi-delta">
+              Shopify: {fmtMoney(total.shopifyFixedFees, currency)} / Abos: {fmtMoney(total.subscriptionFees, currency)}
+            </div>
+          </div>
+          <div className="kpi">
             <div className="kpi-label">Profit Brut</div>
             <div className={`kpi-value ${total.profitBrut >= 0 ? "green" : "red"}`}>
               {fmtMoney(total.profitBrut, currency)}
@@ -468,6 +495,7 @@ function Profit() {
                     {totalTaxOnSalesPct}% sur Sales
                   </div>
                 </th>
+                <th style={{ textAlign: "right", background: "rgba(248, 113, 113, 0.12)", color: "var(--red)" }}>Frais fixes</th>
                 <th style={{ textAlign: "right", background: "rgba(52, 211, 153, 0.10)" }}>Profit Brut</th>
                 <th style={{ textAlign: "right", background: "rgba(52, 211, 153, 0.10)" }}>%</th>
                 <th style={{ textAlign: "right", background: "rgba(52, 211, 153, 0.15)" }}>Profit Net</th>
@@ -519,6 +547,9 @@ function Profit() {
                   <td className="mono" style={{ textAlign: "right", color: "var(--purple)" }}>
                     {d.sales > 0 ? `-${fmtMoney(d.taxes, currency)}` : "—"}
                   </td>
+                  <td className="mono red" style={{ textAlign: "right" }}>
+                    {d.fixedCosts > 0 ? `-${fmtMoney(d.fixedCosts, currency)}` : "—"}
+                  </td>
                   <td className="mono" style={{ textAlign: "right", color: cellColor(d.profitBrut, 0, 100) }}>
                     {d.sales > 0 || d.adsRaw > 0 ? fmtMoney(d.profitBrut, currency) : "—"}
                   </td>
@@ -554,6 +585,9 @@ function Profit() {
                   <td className="mono" style={{ textAlign: "right", color: "var(--purple)" }}>
                     -{fmtMoney(total.taxes, currency)}
                   </td>
+                  <td className="mono red" style={{ textAlign: "right" }}>
+                    -{fmtMoney(total.fixedCosts, currency)}
+                  </td>
                   <td className="mono" style={{ textAlign: "right", color: cellColor(total.profitBrut, 0, 100) }}>
                     {fmtMoney(total.profitBrut, currency)}
                   </td>
@@ -582,7 +616,7 @@ function Profit() {
         <div><b>Meta Ads (TTC)</b> = Ads HT × (1 + {taxOnAdSpendPct}% TVA sur dépenses pub).</div>
         <div><b>Taxes</b> = Sales × {totalTaxOnSalesPct}% (URSSAF {data.config.urssaf || 0}% + IR {data.config.ir || 0}% + TVA {data.config.tva || 0}%).</div>
         <div><b>Profit Brut</b> = Sales − Meta Ads TTC − COGS</div>
-        <div><b>Profit Net</b> = Profit Brut − Taxes</div>
+        <div><b>Profit Net</b> = Profit Brut − Taxes − Frais fixes</div>
         <div><b>ROAS</b> = Sales / Ads (HT)</div>
       </div>
     </div>

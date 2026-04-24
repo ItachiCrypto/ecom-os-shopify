@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Shell from "@/components/Shell";
-import type { EcomConfig, ProductCost, Bundle } from "@/lib/types";
+import type { EcomConfig, ProductCost, Bundle, MonthlySubscription } from "@/lib/types";
 
 interface ShopifyMarket {
   id: string;
@@ -164,6 +164,12 @@ function Parametres() {
           <Row label="TVA sur dépenses pub (%)" value={config.taxOnAdSpend ?? 5} onChange={v => set({ taxOnAdSpend: v })} />
         </div>
 
+        <FixedCostsSection
+          config={config}
+          currency={shopInfo?.currencyCode || "USD"}
+          onChange={(patch) => set(patch)}
+        />
+
         <ProductCostsSection
           config={config}
           products={products}
@@ -274,6 +280,127 @@ function Row({ label, value, onChange, step = 0.01 }: { label: string; value: nu
     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0.4rem 0", borderBottom: "1px solid var(--border)" }}>
       <span style={{ fontSize: "0.85rem", color: "var(--text-dim)" }}>{label}</span>
       <input className="input mono" type="number" step={step} value={value} onChange={e => onChange(parseFloat(e.target.value) || 0)} style={{ maxWidth: 120 }} />
+    </div>
+  );
+}
+
+function FixedCostsSection({
+  config,
+  currency,
+  onChange,
+}: {
+  config: EcomConfig;
+  currency: string;
+  onChange: (patch: Partial<EcomConfig>) => void;
+}) {
+  const subscriptions = config.monthlySubscriptions || [];
+  const activeMonthlyTotal = subscriptions
+    .filter((s) => s.active)
+    .reduce((sum, s) => sum + (Number(s.monthlyAmount) || 0), 0);
+  const dailySubscriptionCost = activeMonthlyTotal / 30.6;
+
+  const updateSubscription = (id: string, patch: Partial<MonthlySubscription>) => {
+    onChange({
+      monthlySubscriptions: subscriptions.map((s) => (s.id === id ? { ...s, ...patch } : s)),
+    });
+  };
+
+  const addSubscription = () => {
+    onChange({
+      monthlySubscriptions: [
+        ...subscriptions,
+        { id: uid(), name: "Nouvel abonnement", monthlyAmount: 0, active: true },
+      ],
+    });
+  };
+
+  const removeSubscription = (id: string) => {
+    onChange({ monthlySubscriptions: subscriptions.filter((s) => s.id !== id) });
+  };
+
+  return (
+    <div className="card" style={{ gridColumn: "1 / -1" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "start", gap: "1rem", marginBottom: "0.75rem" }}>
+        <div>
+          <div style={{ fontSize: "1.05rem", fontWeight: 600, marginBottom: "0.25rem" }}>Frais fixes</div>
+          <div style={{ fontSize: "0.8rem", color: "var(--text-dim)", lineHeight: 1.5 }}>
+            Le frais Shopify fixe est retire une fois par commande. Les abonnements actifs sont prorates par jour (mensuel / 30.6) puis retires du benefice net.
+          </div>
+        </div>
+        <div className="pill pill-blue">
+          Abos actifs: {activeMonthlyTotal.toFixed(2)} {currency}/mois
+        </div>
+      </div>
+
+      <Row
+        label={`Frais Shopify fixe / commande (${currency})`}
+        value={config.shopifyFixedFeePerOrder ?? 0}
+        onChange={(v) => onChange({ shopifyFixedFeePerOrder: v })}
+      />
+
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "1rem", marginBottom: "0.5rem" }}>
+        <div>
+          <div style={{ fontWeight: 500 }}>Abonnements mensuels</div>
+          <div style={{ fontSize: "0.75rem", color: "var(--text-dim)", marginTop: "0.15rem" }}>
+            Cout journalier actuel: {dailySubscriptionCost.toFixed(2)} {currency}/jour
+          </div>
+        </div>
+        <button className="btn btn-primary" onClick={addSubscription}>+ Abonnement</button>
+      </div>
+
+      {subscriptions.length === 0 ? (
+        <div style={{ padding: "1rem", textAlign: "center", color: "var(--text-faint)", fontSize: "0.85rem", border: "1px solid var(--border)", borderRadius: 8 }}>
+          Aucun abonnement configure.
+        </div>
+      ) : (
+        <div style={{ overflowX: "auto" }}>
+          <table className="table">
+            <thead>
+              <tr>
+                <th>Nom</th>
+                <th style={{ textAlign: "right" }}>Montant / mois</th>
+                <th style={{ textAlign: "center" }}>Actif</th>
+                <th style={{ width: 90 }} />
+              </tr>
+            </thead>
+            <tbody>
+              {subscriptions.map((subscription) => (
+                <tr key={subscription.id}>
+                  <td>
+                    <input
+                      className="input"
+                      value={subscription.name}
+                      onChange={(e) => updateSubscription(subscription.id, { name: e.target.value })}
+                      placeholder="Nom"
+                    />
+                  </td>
+                  <td style={{ textAlign: "right" }}>
+                    <input
+                      className="input mono"
+                      type="number"
+                      step="0.01"
+                      value={subscription.monthlyAmount || ""}
+                      onChange={(e) => updateSubscription(subscription.id, { monthlyAmount: parseFloat(e.target.value) || 0 })}
+                      placeholder="0.00"
+                      style={{ maxWidth: 130, textAlign: "right", marginLeft: "auto" }}
+                    />
+                  </td>
+                  <td style={{ textAlign: "center" }}>
+                    <input
+                      type="checkbox"
+                      checked={subscription.active}
+                      onChange={(e) => updateSubscription(subscription.id, { active: e.target.checked })}
+                    />
+                  </td>
+                  <td style={{ textAlign: "right" }}>
+                    <button className="btn btn-danger" onClick={() => removeSubscription(subscription.id)}>Supprimer</button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }

@@ -12,7 +12,7 @@ import {
   inRange,
   isoInTimeZone,
 } from "@/hooks/useDateRange";
-import type { ProductCost, Bundle } from "@/lib/types";
+import type { ProductCost, Bundle, MonthlySubscription } from "@/lib/types";
 
 interface OrderMoney { shopMoney: { amount: string; currencyCode: string } }
 interface Variant {
@@ -54,6 +54,8 @@ interface ShopData {
     soldeInitial: number;
     alerteRunway: number;
     taxOnAdSpend?: number;
+    shopifyFixedFeePerOrder?: number;
+    monthlySubscriptions?: MonthlySubscription[];
     productCosts?: Record<string, ProductCost>;
     bundles?: Bundle[];
     dailyAds?: Record<string, { spend: number; notes?: string }>;
@@ -128,6 +130,11 @@ function Dashboard() {
     const bundles = (data.config.bundles || []).filter((b) => b.active);
     const dailyAds = data.config.dailyAds || {};
     const taxOnAdSpend = data.config.taxOnAdSpend ?? 5;
+    const shopifyFixedFeePerOrder = data.config.shopifyFixedFeePerOrder ?? 0;
+    const monthlySubscriptions = data.config.monthlySubscriptions || [];
+    const activeMonthlySubscriptions = monthlySubscriptions
+      .filter((s) => s.active)
+      .reduce((sum, s) => sum + (Number(s.monthlyAmount) || 0), 0);
     const urssaf = data.config.urssaf || 0;
     const ir = data.config.ir || 0;
     const tva = data.config.tva || 0;
@@ -192,9 +199,15 @@ function Dashboard() {
     // Taxes on sales
     const totalTaxes = (totalSales * totalTaxOnSalesRate) / 100;
 
+    // Fixed costs
+    const rangeDays = daysBetweenInclusive(range.from, range.to);
+    const shopifyFixedFees = orders.length * shopifyFixedFeePerOrder;
+    const subscriptionFees = (activeMonthlySubscriptions / 30.6) * rangeDays;
+    const fixedCosts = shopifyFixedFees + subscriptionFees;
+
     // Profit calculation (matches Profit Journalier)
     const profitBrut = totalSales - totalAdsTTC - totalCogs;
-    const profitNet = profitBrut - totalTaxes;
+    const profitNet = profitBrut - totalTaxes - fixedCosts;
     const profitNetPct = totalSales > 0 ? (profitNet / totalSales) * 100 : 0;
     const roas = totalAdsHT > 0 ? totalSales / totalAdsHT : 0;
 
@@ -202,8 +215,7 @@ function Dashboard() {
     const solde = data.config.soldeInitial + profitNet;
 
     // Runway based on average daily burn in the range
-    const rangeDays = daysBetweenInclusive(range.from, range.to);
-    const dailyBurn = (totalAdsTTC + totalCogs) / rangeDays;
+    const dailyBurn = (totalAdsTTC + totalCogs + fixedCosts) / rangeDays;
     const runway = dailyBurn > 0 ? solde / dailyBurn : 999;
 
     // Today/Week/Month CA — computed within the filtered orders, relative to real today
@@ -232,6 +244,10 @@ function Dashboard() {
       totalAdsHT,
       totalAdsTTC,
       totalTaxes,
+      fixedCosts,
+      shopifyFixedFees,
+      subscriptionFees,
+      activeMonthlySubscriptions,
       totalTaxOnSalesRate,
       taxOnAdSpend,
       profitBrut,
@@ -327,6 +343,14 @@ function Dashboard() {
             {fmtMoney(stats.totalTaxes, currency)}
           </div>
           <div className="kpi-delta">{stats.totalTaxOnSalesRate.toFixed(2)}% sur Sales</div>
+        </div>
+
+        <div className="kpi">
+          <div className="kpi-label">Frais fixes</div>
+          <div className="kpi-value red">{fmtMoney(stats.fixedCosts, currency)}</div>
+          <div className="kpi-delta">
+            Shopify: {fmtMoney(stats.shopifyFixedFees, currency)} / Abos: {fmtMoney(stats.subscriptionFees, currency)}
+          </div>
         </div>
 
         <div className="kpi">
