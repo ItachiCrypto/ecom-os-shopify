@@ -35,7 +35,9 @@ export async function getShopData(shop: string): Promise<ShopData | null> {
     const { blobs } = await list({ prefix: filename(shop), token });
     if (blobs.length === 0) return null;
     const blob = blobs[0];
-    const res = await fetch(blob.url, { cache: "no-store" });
+    const sourceUrl = blob.downloadUrl || blob.url;
+    const freshUrl = `${sourceUrl}${sourceUrl.includes("?") ? "&" : "?"}_=${Date.now()}`;
+    const res = await fetch(freshUrl, { cache: "no-store" });
     if (!res.ok) return null;
     const data = (await res.json()) as ShopData;
     cache.set(shop, { data, expires: Date.now() + CACHE_TTL });
