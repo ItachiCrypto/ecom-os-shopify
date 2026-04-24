@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import Shell from "@/components/Shell";
 import { fmtMoney } from "@/lib/order-utils";
 import { useDateRangeCtx } from "@/components/DateRangeContext";
-import { inRange, iso } from "@/hooks/useDateRange";
+import { addDaysIso, formatIsoDate, inRange, isoInTimeZone } from "@/hooks/useDateRange";
 import type { ProductCost, Bundle } from "@/lib/types";
 
 interface Money { shopMoney: { amount: string; currencyCode: string } }
@@ -67,7 +67,7 @@ function Profit() {
   const [editableShop, setEditableShop] = useState("");
   const [dailyAdsByShop, setDailyAdsByShop] = useState<DailyAdsByShop>({});
   const [pendingAdSaves, setPendingAdSaves] = useState<Record<string, { shop?: string; date: string; spend: number; notes?: string }>>({});
-  const { range } = useDateRangeCtx();
+  const { range, timeZone } = useDateRangeCtx();
 
   useEffect(() => {
     Promise.all([
@@ -168,7 +168,7 @@ function Profit() {
       .map(([variantId, pc]) => ({ variantId, ...pc }));
 
     // Filter orders in range
-    const filteredOrders = orders.filter((o) => inRange(o.createdAt, range));
+    const filteredOrders = orders.filter((o) => inRange(o.createdAt, range, timeZone));
 
     // Build day buckets
     const dayMap = new Map<string, {
@@ -181,17 +181,14 @@ function Profit() {
 
     // Init all days in range with 0s — use LOCAL date (iso) so "today" is included
     // even when the user's timezone differs from UTC.
-    const fromDate = new Date(range.from + "T00:00:00");
-    const toDate = new Date(range.to + "T00:00:00");
-    for (let d = new Date(fromDate); d <= toDate; d.setDate(d.getDate() + 1)) {
-      const key = iso(d);
+    for (let key = range.from; key <= range.to; key = addDaysIso(key, 1)) {
       dayMap.set(key, { date: key, orders: 0, qtyByVariant: {}, sales: 0, cogs: 0 });
     }
 
     for (const o of filteredOrders) {
       // Use LOCAL date of the order (not UTC) so orders placed late evening
       // don't get bucketed into the next day.
-      const dayKey = iso(new Date(o.createdAt));
+      const dayKey = isoInTimeZone(o.createdAt, timeZone);
       const day = dayMap.get(dayKey);
       if (!day) continue;
       day.orders += 1;
@@ -290,7 +287,7 @@ function Profit() {
       total: { ...total, profitBrutPct: totalProfitBrutPct, profitNetPct: totalProfitNetPct, roas: totalRoas },
       activeVariants,
     };
-  }, [orders, data, range]);
+  }, [orders, data, range, timeZone]);
 
   if (!orders || !data) return <div>Chargement...</div>;
 
@@ -339,8 +336,7 @@ function Profit() {
   };
 
   const formatDay = (iso: string) => {
-    const d = new Date(iso + "T12:00:00");
-    return d.toLocaleDateString("fr-FR", { day: "2-digit", month: "short" });
+    return formatIsoDate(iso, { day: "2-digit", month: "short" });
   };
 
   const hasAnyProducts = activeVariants.length > 0;
@@ -359,7 +355,7 @@ function Profit() {
         <div>
           <h1 style={{ fontSize: "1.75rem", fontWeight: 600, margin: 0 }}>Profit Journalier</h1>
           <div style={{ color: "var(--text-dim)", fontSize: "0.875rem", marginTop: "0.25rem" }}>
-            Période <span className="accent">{range.label}</span> · {days.length} jours · {total?.orders || 0} commandes
+            Période <span className="accent">{range.label}</span> · {days.length} jours · {total?.orders || 0} commandes · Heure boutique {timeZone}
             {dirty && <span style={{ marginLeft: "0.75rem", color: "var(--blue)" }}>Sauvegarde...</span>}
           </div>
         </div>

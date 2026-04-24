@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useDateRangeCtx } from "./DateRangeContext";
-import type { DateRangePreset } from "@/hooks/useDateRange";
+import { formatIsoDate, type DateRangePreset } from "@/hooks/useDateRange";
 
 const PRESETS: { id: DateRangePreset; label: string }[] = [
   { id: "today", label: "Aujourd'hui" },
@@ -36,11 +36,6 @@ export default function DateRangePicker() {
     setOpen(false);
   };
 
-  const fmtShort = (date: string) => {
-    const d = new Date(date + "T12:00:00");
-    return d.toLocaleDateString("fr-FR", { day: "2-digit", month: "short", year: "numeric" });
-  };
-
   return (
     <div ref={ref} style={{ position: "relative", display: "inline-block" }}>
       <button
@@ -68,7 +63,7 @@ export default function DateRangePicker() {
           </span>
         </span>
         <span style={{ fontSize: "0.7rem", color: "var(--text-dim)", fontFamily: "JetBrains Mono, monospace", whiteSpace: "nowrap" }}>
-          {fmtShort(range.from)} - {fmtShort(range.to)}
+          {formatIsoDate(range.from, { day: "2-digit", month: "short", year: "numeric" })} - {formatIsoDate(range.to, { day: "2-digit", month: "short", year: "numeric" })}
         </span>
       </button>
 

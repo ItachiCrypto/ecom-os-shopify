@@ -5,7 +5,13 @@ import Shell from "@/components/Shell";
 import { fmtMoney, getRealFees, hasRealFeeData } from "@/lib/order-utils";
 import type { Transaction } from "@/lib/order-utils";
 import { useDateRangeCtx } from "@/components/DateRangeContext";
-import { inRange, iso } from "@/hooks/useDateRange";
+import {
+  addDaysIso,
+  daysBetweenInclusive,
+  formatDateTimeInTimeZone,
+  inRange,
+  isoInTimeZone,
+} from "@/hooks/useDateRange";
 import type { ProductCost, Bundle } from "@/lib/types";
 
 interface OrderMoney { shopMoney: { amount: string; currencyCode: string } }
@@ -69,13 +75,13 @@ function Dashboard() {
   const [currency, setCurrency] = useState("USD");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const { range } = useDateRangeCtx();
+  const { range, timeZone } = useDateRangeCtx();
 
   // Filter orders by active date range
   const orders = useMemo(() => {
     if (!allOrders) return null;
-    return allOrders.filter((o) => inRange(o.createdAt, range));
-  }, [allOrders, range]);
+    return allOrders.filter((o) => inRange(o.createdAt, range, timeZone));
+  }, [allOrders, range, timeZone]);
 
   useEffect(() => {
     const load = async () => {
@@ -106,10 +112,10 @@ function Dashboard() {
 
   const stats = useMemo(() => {
     if (!orders || !data) return null;
-    const now = new Date();
-    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    const weekAgo = new Date(today.getTime() - 7 * 86400_000);
-    const monthAgo = new Date(today.getTime() - 30 * 86400_000);
+    const todayIso = isoInTimeZone(new Date(), timeZone);
+    const weekFrom = addDaysIso(todayIso, -6);
+    const monthFrom = addDaysIso(todayIso, -29);
+    const orderDay = (o: Order) => isoInTimeZone(o.createdAt, timeZone);
 
     const gross = (o: Order) => parseFloat(o.currentTotalPriceSet.shopMoney.amount);
     const refund = (o: Order) => parseFloat(o.totalRefundedSet.shopMoney.amount);
@@ -196,20 +202,14 @@ function Dashboard() {
     const solde = data.config.soldeInitial + profitNet;
 
     // Runway based on average daily burn in the range
-    const rangeDays = Math.max(
-      1,
-      Math.ceil(
-        (new Date(range.to + "T00:00:00").getTime() - new Date(range.from + "T00:00:00").getTime()) /
-          86400_000
-      ) + 1
-    );
+    const rangeDays = daysBetweenInclusive(range.from, range.to);
     const dailyBurn = (totalAdsTTC + totalCogs) / rangeDays;
     const runway = dailyBurn > 0 ? solde / dailyBurn : 999;
 
     // Today/Week/Month CA — computed within the filtered orders, relative to real today
-    const today_orders = orders.filter((o) => new Date(o.createdAt) >= today);
-    const week_orders = orders.filter((o) => new Date(o.createdAt) >= weekAgo);
-    const month_orders = orders.filter((o) => new Date(o.createdAt) >= monthAgo);
+    const today_orders = orders.filter((o) => orderDay(o) === todayIso);
+    const week_orders = orders.filter((o) => orderDay(o) >= weekFrom && orderDay(o) <= todayIso);
+    const month_orders = orders.filter((o) => orderDay(o) >= monthFrom && orderDay(o) <= todayIso);
     const caToday = today_orders.reduce((s, o) => s + gross(o), 0);
     const caWeek = week_orders.reduce((s, o) => s + gross(o), 0);
     const caMonth = month_orders.reduce((s, o) => s + gross(o), 0);
@@ -217,10 +217,7 @@ function Dashboard() {
     const refundsTotal = orders.reduce((s, o) => s + refund(o), 0);
     const feesTotal = orders.reduce((s, o) => s + realFee(o), 0);
     const ordersWithFeeData = orders.filter((o) => hasRealFeeData(o)).length;
-    const todayIso = iso(today);
     const adsToday = dailyAds[todayIso]?.spend || 0;
-    void weekAgo;
-    void monthAgo;
 
     const objCaPct =
       data.config.objectifCA > 0 ? Math.min((caWeek / data.config.objectifCA) * 100, 100) : 0;
@@ -254,7 +251,7 @@ function Dashboard() {
       pendingFulfill,
       adsToday,
     };
-  }, [orders, data, range]);
+  }, [orders, data, range, timeZone]);
 
   if (loading) {
     return <div style={{ color: "var(--text-dim)" }}>Chargement des données Shopify...</div>;
@@ -277,7 +274,7 @@ function Dashboard() {
         <div>
           <h1 style={{ fontSize: "1.75rem", fontWeight: 600, margin: 0 }}>Dashboard</h1>
           <div style={{ color: "var(--text-dim)", fontSize: "0.875rem", marginTop: "0.25rem" }}>
-            Période <span className="accent">{range.label}</span> · {stats.totalOrders} commandes · {currency}
+            Période <span className="accent">{range.label}</span> · {stats.totalOrders} commandes · {currency} · Heure boutique {timeZone}
             {stats.ordersWithFeeData > 0 && (
               <> · <span style={{ color: "var(--green)" }}>{stats.ordersWithFeeData} avec vrais frais Shopify</span></>
             )}
@@ -426,7 +423,7 @@ function Dashboard() {
                   <tr key={o.id}>
                     <td className="mono">{o.name}</td>
                     <td style={{ fontSize: "0.8rem", color: "var(--text-dim)" }}>
-                      {new Date(o.createdAt).toLocaleString("fr-FR", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}
+                      {formatDateTimeInTimeZone(o.createdAt, timeZone)}
                     </td>
                     <td>{o.shippingAddress?.countryCodeV2 || "—"}</td>
                     <td>
