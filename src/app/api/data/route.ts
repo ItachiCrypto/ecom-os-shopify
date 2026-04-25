@@ -6,7 +6,7 @@ import {
   mirrorConfigToAllShops,
 } from "@/lib/storage";
 import { SHOP_COOKIE, ALL_SHOPS, MASTER_SHOP, SHARED_CONFIG_FIELDS } from "@/lib/config";
-import type { ShopData } from "@/lib/types";
+import type { EcomConfig, ShopData } from "@/lib/types";
 
 export async function GET(request: NextRequest) {
   const shop = request.cookies.get(SHOP_COOKIE)?.value;
@@ -24,11 +24,22 @@ export async function GET(request: NextRequest) {
         { status: 404 }
       );
     }
-    // Merge dailyAds from all shops (sum spend per date)
+    const shopDatas = (await Promise.all(all.map((s) => getShopData(s)))).filter(
+      (data): data is ShopData => Boolean(data)
+    );
+
+    // Merge shop-specific calculation inputs so the ALL view equals the sum of shop views.
     const mergedDailyAds: Record<string, { spend: number; notes?: string }> = {};
-    for (const s of all) {
-      const data = await getShopData(s);
-      const entries = data?.config?.dailyAds || {};
+    const mergedProductCosts: NonNullable<EcomConfig["productCosts"]> = {};
+    const mergedBundles: NonNullable<EcomConfig["bundles"]> = [];
+    const mergedMonthlySubscriptions: NonNullable<EcomConfig["monthlySubscriptions"]> = [];
+    const mergedSoldeInitial = shopDatas.reduce(
+      (sum, data) => sum + (data.config.soldeInitial || 0),
+      0
+    );
+
+    for (const data of shopDatas) {
+      const entries = data.config.dailyAds || {};
       for (const [date, entry] of Object.entries(entries)) {
         mergedDailyAds[date] = {
           spend: (mergedDailyAds[date]?.spend || 0) + (entry.spend || 0),
@@ -38,11 +49,32 @@ export async function GET(request: NextRequest) {
               : mergedDailyAds[date]?.notes || entry.notes,
         };
       }
+
+      Object.assign(mergedProductCosts, data.config.productCosts || {});
+      mergedBundles.push(
+        ...(data.config.bundles || []).map((bundle) => ({
+          ...bundle,
+          id: `${data.shop}:${bundle.id}`,
+        }))
+      );
+      mergedMonthlySubscriptions.push(
+        ...(data.config.monthlySubscriptions || []).map((subscription) => ({
+          ...subscription,
+          id: `${data.shop}:${subscription.id}`,
+        }))
+      );
     }
     const aggregated: ShopData = {
       ...master,
       shop: ALL_SHOPS,
-      config: { ...master.config, dailyAds: mergedDailyAds },
+      config: {
+        ...master.config,
+        soldeInitial: mergedSoldeInitial,
+        dailyAds: mergedDailyAds,
+        productCosts: mergedProductCosts,
+        bundles: mergedBundles,
+        monthlySubscriptions: mergedMonthlySubscriptions,
+      },
     };
     const { accessToken: _t, ...safe } = aggregated;
     void _t;
