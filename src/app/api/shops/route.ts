@@ -14,6 +14,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json(cached.body, {
       headers: {
         "Cache-Control": "private, max-age=30, stale-while-revalidate=120",
+        Vary: "Cookie",
         "X-EcomOS-Cache": "HIT",
       },
     });
@@ -58,6 +59,7 @@ export async function GET(request: NextRequest) {
   return NextResponse.json(body, {
     headers: {
       "Cache-Control": "private, max-age=30, stale-while-revalidate=120",
+      Vary: "Cookie",
       "X-EcomOS-Cache": "MISS",
     },
   });

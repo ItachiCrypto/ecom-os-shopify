@@ -12,6 +12,7 @@ function cachedResponse(key: string) {
   return NextResponse.json(cached.body, {
     headers: {
       "Cache-Control": "private, max-age=10, stale-while-revalidate=30",
+      Vary: "Cookie",
       "X-EcomOS-Cache": "HIT",
     },
   });
@@ -22,6 +23,7 @@ function jsonWithCache(key: string, body: unknown) {
   return NextResponse.json(body, {
     headers: {
       "Cache-Control": "private, max-age=10, stale-while-revalidate=30",
+      Vary: "Cookie",
       "X-EcomOS-Cache": "MISS",
     },
   });
