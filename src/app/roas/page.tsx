@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Shell from "@/components/Shell";
 import { formatCurrency, formatPct } from "@/lib/format";
-import { cachedJson, clearClientApiCache } from "@/lib/client-api-cache";
 
 interface Scenario {
   id: string;
@@ -41,7 +41,7 @@ function margeNette(prix: number, urssaf: number, shopifyPct: number, ir: number
 }
 
 export default function ROASPage() {
-  return <ROAS />;
+  return <Shell><ROAS /></Shell>;
 }
 
 function ROAS() {
@@ -51,7 +51,7 @@ function ROAS() {
   const [dirty, setDirty] = useState(false);
 
   useEffect(() => {
-    cachedJson<{ data: { config: EcomConfig; scenarios?: Scenario[] } }>("/api/data").then(j => {
+    fetch("/api/data").then(r => r.json()).then(j => {
       setConfig(j.data.config);
       setScenarios(j.data.scenarios || []);
     });
@@ -61,10 +61,7 @@ function ROAS() {
     if (!dirty || !config) return;
     const timer = setTimeout(() => {
       fetch("/api/data", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ config, scenarios }) })
-        .then(() => {
-          clearClientApiCache("/api/data");
-          setDirty(false);
-        });
+        .then(() => setDirty(false));
     }, 300);
     return () => clearTimeout(timer);
   }, [scenarios, config, dirty]);
@@ -90,7 +87,7 @@ function ROAS() {
     }]);
   };
 
-  if (!config) return <div>Chargement...</div>;
+  if (!config) return <Shell><div>Chargement...</div></Shell>;
 
   return (
     <div>

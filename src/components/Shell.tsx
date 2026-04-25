@@ -6,7 +6,6 @@ import { useEffect, useState } from "react";
 import { DateRangeProvider } from "./DateRangeContext";
 import DateRangePicker from "./DateRangePicker";
 import ShopSwitcher from "./ShopSwitcher";
-import { cachedJson, warmRouteData } from "@/lib/client-api-cache";
 
 const NAV = [
   { href: "/", label: "Dashboard", icon: "DB" },
@@ -25,12 +24,17 @@ export default function Shell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const [shop, setShop] = useState<ShopInfo | null>(null);
   const [connected, setConnected] = useState<boolean | null>(null);
-  const [shopReloadKey, setShopReloadKey] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
-    cachedJson<{ shop?: ShopInfo }>("/api/shop")
-      .then((data) => {
+    fetch("/api/shop")
+      .then(async (r) => {
+        if (cancelled) return;
+        if (r.status === 401) {
+          setConnected(false);
+          return;
+        }
+        const data = await r.json();
         if (cancelled) return;
         if (data.shop) {
           setShop(data.shop);
@@ -43,17 +47,7 @@ export default function Shell({ children }: { children: React.ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, [shopReloadKey]);
-
-  useEffect(() => {
-    const onShopChanged = () => setShopReloadKey((key) => key + 1);
-    window.addEventListener("ecomos-shop-changed", onShopChanged);
-    return () => window.removeEventListener("ecomos-shop-changed", onShopChanged);
   }, []);
-
-  useEffect(() => {
-    warmRouteData(pathname);
-  }, [pathname]);
 
   if (connected === false) {
     return <ConnectScreen />;
@@ -79,8 +73,6 @@ export default function Shell({ children }: { children: React.ReactNode }) {
               key={item.href}
               href={item.href}
               className={`nav-item ${pathname === item.href ? "active" : ""}`}
-              onMouseEnter={() => warmRouteData(item.href)}
-              onFocus={() => warmRouteData(item.href)}
             >
               <span className="icon">{item.icon}</span>
               <span>{item.label}</span>
@@ -101,7 +93,7 @@ export default function Shell({ children }: { children: React.ReactNode }) {
       </aside>
 
       <main className="main-panel">
-        <DateRangeProvider key={shopReloadKey}>
+        <DateRangeProvider>
           <TopBar pathname={pathname} />
           {children}
         </DateRangeProvider>

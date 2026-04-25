@@ -1,10 +1,10 @@
 "use client";
 
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
+import Shell from "@/components/Shell";
 import { fmtMoney, getRealFees, hasRealFeeData } from "@/lib/order-utils";
 import type { Transaction } from "@/lib/order-utils";
 import { useDateRangeCtx } from "@/components/DateRangeContext";
-import { cachedJson } from "@/lib/client-api-cache";
 import {
   addDaysIso,
   daysBetweenInclusive,
@@ -91,7 +91,11 @@ function MoneyStack({
 }
 
 export default function DashboardPage() {
-  return <Dashboard />;
+  return (
+    <Shell>
+      <Dashboard />
+    </Shell>
+  );
 }
 
 function Dashboard() {
@@ -111,14 +115,21 @@ function Dashboard() {
   useEffect(() => {
     const load = async () => {
       try {
-        const [oJson, dJson, sJson] = await Promise.all([
-          cachedJson<{ orders: Order[] }>("/api/orders?all=true"),
-          cachedJson<{ data: ShopData }>("/api/data"),
-          cachedJson<{ shop?: { currencyCode?: string } }>("/api/shop").catch(() => null),
+        const [oRes, dRes, sRes] = await Promise.all([
+          fetch("/api/orders?all=true"),
+          fetch("/api/data"),
+          fetch("/api/shop"),
         ]);
+        if (!oRes.ok) throw new Error((await oRes.json()).error || "orders failed");
+        if (!dRes.ok) throw new Error((await dRes.json()).error || "data failed");
+        const oJson = await oRes.json();
+        const dJson = await dRes.json();
         setAllOrders(oJson.orders);
         setData(dJson.data);
-        if (sJson?.shop?.currencyCode) setCurrency(sJson.shop.currencyCode);
+        if (sRes.ok) {
+          const sJson = await sRes.json();
+          if (sJson.shop?.currencyCode) setCurrency(sJson.shop.currencyCode);
+        }
       } catch (e) {
         setError(e instanceof Error ? e.message : "Load error");
       } finally {

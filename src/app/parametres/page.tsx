@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Shell from "@/components/Shell";
 import type { EcomConfig, ProductCost, Bundle, MonthlySubscription } from "@/lib/types";
-import { cachedJson, clearClientApiCache } from "@/lib/client-api-cache";
 
 interface ShopifyMarket {
   id: string;
@@ -40,7 +40,7 @@ interface ShopifyProduct {
   };
 }
 
-export default function ParametresPage() { return <Parametres />; }
+export default function ParametresPage() { return <Shell><Parametres /></Shell>; }
 
 function Parametres() {
   const [config, setConfig] = useState<EcomConfig | null>(null);
@@ -52,9 +52,9 @@ function Parametres() {
 
   useEffect(() => {
     Promise.all([
-      cachedJson<{ data: { config: EcomConfig } }>("/api/data"),
-      cachedJson<{ shop?: ShopInfo; markets?: ShopifyMarket[] }>("/api/shop"),
-      cachedJson<{ products?: ShopifyProduct[] }>("/api/products", 300_000).catch(() => ({ products: [] })),
+      fetch("/api/data").then(r => r.json()),
+      fetch("/api/shop").then(r => r.json()),
+      fetch("/api/products").then(r => r.ok ? r.json() : { products: [] }),
     ]).then(([d, s, p]) => {
       setConfig(d.data.config);
       if (s.shop) setShopInfo(s.shop);
@@ -67,7 +67,6 @@ function Parametres() {
     if (!dirty || !config) return;
     const t = setTimeout(async () => {
       await fetch("/api/data", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ config }) });
-      clearClientApiCache("/api/data");
       setDirty(false); setSaved(true);
       setTimeout(() => setSaved(false), 1500);
     }, 300);
