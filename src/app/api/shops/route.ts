@@ -3,8 +3,22 @@ import { listActiveShops, getShopData } from "@/lib/storage";
 import { getShopInfo } from "@/lib/shopify";
 import { SHOP_COOKIE, ALL_SHOPS } from "@/lib/config";
 
+const SHOPS_CACHE_TTL = 2 * 60_000;
+const shopsCache = new Map<string, { body: unknown; expires: number }>();
+
 export async function GET(request: NextRequest) {
   const activeShop = request.cookies.get(SHOP_COOKIE)?.value;
+  const cacheKey = `shops:${activeShop || "none"}`;
+  const cached = shopsCache.get(cacheKey);
+  if (cached && cached.expires > Date.now()) {
+    return NextResponse.json(cached.body, {
+      headers: {
+        "Cache-Control": "private, max-age=30, stale-while-revalidate=120",
+        "X-EcomOS-Cache": "HIT",
+      },
+    });
+  }
+
   const shops = await listActiveShops();
 
   // Enrich with display name from Shopify
@@ -39,5 +53,12 @@ export async function GET(request: NextRequest) {
         ]
       : enriched;
 
-  return NextResponse.json({ shops: withAll, activeShop });
+  const body = { shops: withAll, activeShop };
+  shopsCache.set(cacheKey, { body, expires: Date.now() + SHOPS_CACHE_TTL });
+  return NextResponse.json(body, {
+    headers: {
+      "Cache-Control": "private, max-age=30, stale-while-revalidate=120",
+      "X-EcomOS-Cache": "MISS",
+    },
+  });
 }

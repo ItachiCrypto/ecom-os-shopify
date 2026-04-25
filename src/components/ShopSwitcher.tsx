@@ -1,6 +1,8 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
+import { cachedJson, clearClientApiCache, warmRouteData } from "@/lib/client-api-cache";
 
 interface ShopRow {
   shop: string;
@@ -15,11 +17,11 @@ export default function ShopSwitcher({ currentShopName }: { currentShopName?: st
   const [switching, setSwitching] = useState<string | null>(null);
   const [addingShop, setAddingShop] = useState("");
   const ref = useRef<HTMLDivElement>(null);
+  const router = useRouter();
 
   useEffect(() => {
     if (!open || shops) return;
-    fetch("/api/shops")
-      .then((r) => r.json())
+    cachedJson<{ shops?: ShopRow[] }>("/api/shops", 120_000)
       .then((d) => setShops(d.shops || []))
       .catch(() => setShops([]));
   }, [open, shops]);
@@ -40,7 +42,12 @@ export default function ShopSwitcher({ currentShopName }: { currentShopName?: st
       body: JSON.stringify({ shop }),
     });
     if (res.ok) {
-      window.location.href = "/";
+      clearClientApiCache();
+      setOpen(false);
+      setSwitching(null);
+      window.dispatchEvent(new Event("ecomos-shop-changed"));
+      router.push("/");
+      router.refresh();
       return;
     }
 
@@ -63,6 +70,10 @@ export default function ShopSwitcher({ currentShopName }: { currentShopName?: st
       <button
         className="btn"
         onClick={() => setOpen((value) => !value)}
+        onMouseEnter={() => {
+          cachedJson<{ shops?: ShopRow[] }>("/api/shops", 120_000).catch(() => undefined);
+          warmRouteData("/");
+        }}
         style={{
           width: "100%",
           textAlign: "left",

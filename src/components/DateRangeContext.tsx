@@ -9,6 +9,7 @@ import {
   isoInTimeZone,
   useDateRange,
 } from "@/hooks/useDateRange";
+import { cachedJson } from "@/lib/client-api-cache";
 
 interface Ctx {
   range: DateRange;
@@ -36,8 +37,8 @@ export function DateRangeProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     Promise.all([
-      fetch("/api/data").then((r) => (r.ok ? r.json() : null)),
-      fetch("/api/shop").then((r) => (r.ok ? r.json() : null)),
+      cachedJson<{ data?: { config?: { shopStartDate?: string } } }>("/api/data").catch(() => null),
+      cachedJson<{ shop?: { ianaTimezone?: string } }>("/api/shop").catch(() => null),
     ])
       .then(([data, shop]) => {
         if (data?.data?.config?.shopStartDate) setShopStartDate(data.data.config.shopStartDate);

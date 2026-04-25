@@ -1,11 +1,11 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import Shell from "@/components/Shell";
 import { fmtMoney } from "@/lib/order-utils";
 import { useDateRangeCtx } from "@/components/DateRangeContext";
 import { addDaysIso, formatIsoDate, inRange, isoInTimeZone } from "@/hooks/useDateRange";
 import type { ProductCost, Bundle, MonthlySubscription } from "@/lib/types";
+import { cachedJson, clearClientApiCache } from "@/lib/client-api-cache";
 
 interface Money { shopMoney: { amount: string; currencyCode: string } }
 interface Variant {
@@ -57,7 +57,7 @@ interface ShopOption {
 type DailyAds = Record<string, { spend: number; notes?: string }>;
 type DailyAdsByShop = Record<string, DailyAds>;
 
-export default function ProfitPage() { return <Shell><Profit /></Shell>; }
+export default function ProfitPage() { return <Profit />; }
 
 function Profit() {
   const [orders, setOrders] = useState<Order[] | null>(null);
@@ -73,10 +73,14 @@ function Profit() {
 
   useEffect(() => {
     Promise.all([
-      fetch("/api/orders?all=true").then(r => r.json()),
-      fetch("/api/data").then(r => r.json()),
-      fetch("/api/shop").then(r => r.ok ? r.json() : null),
-      fetch("/api/ad-spend").then(r => r.ok ? r.json() : null),
+      cachedJson<{ orders: Order[] }>("/api/orders?all=true"),
+      cachedJson<{ data: ShopData }>("/api/data"),
+      cachedJson<{ shop?: { currencyCode?: string; myshopifyDomain?: string }; mode?: string }>("/api/shop").catch(() => null),
+      cachedJson<{
+        shops?: ShopOption[];
+        dailyAdsByShop?: DailyAdsByShop;
+        editableShop?: string;
+      }>("/api/ad-spend").catch(() => null),
     ]).then(([o, d, s, ads]) => {
       setOrders(o.orders);
       setData(d.data);
@@ -118,6 +122,8 @@ function Profit() {
           })
         )
       );
+      clearClientApiCache("/api/data");
+      clearClientApiCache("/api/ad-spend");
       setDirty(false);
       setPendingAdSaves({});
     }, 300);

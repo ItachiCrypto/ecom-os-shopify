@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { JetBrains_Mono, Outfit } from "next/font/google";
+import Shell from "@/components/Shell";
 import "./globals.css";
 
 const outfit = Outfit({
@@ -22,7 +23,9 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="fr">
-      <body className={`${outfit.variable} ${jetbrainsMono.variable}`}>{children}</body>
+      <body className={`${outfit.variable} ${jetbrainsMono.variable}`}>
+        <Shell>{children}</Shell>
+      </body>
     </html>
   );
 }
