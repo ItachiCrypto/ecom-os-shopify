@@ -43,7 +43,6 @@ export default function ShopSwitcher({ currentShopName }: { currentShopName?: st
     });
     if (res.ok) {
       clearClientApiCache();
-      setShops(null);
       setOpen(false);
       setSwitching(null);
       window.dispatchEvent(new Event("ecomos-shop-changed"));
@@ -65,7 +64,6 @@ export default function ShopSwitcher({ currentShopName }: { currentShopName?: st
 
   const current = shops?.find((shop) => shop.active);
   const allShop = shops?.find((shop) => shop.shop === "__all__");
-  const installedShops = shops?.filter((shop) => shop.shop !== "__all__") || [];
 
   return (
     <div ref={ref} style={{ position: "relative" }}>
@@ -123,7 +121,7 @@ export default function ShopSwitcher({ currentShopName }: { currentShopName?: st
             <div style={{ padding: "0.5rem", fontSize: "0.8rem", color: "var(--text-faint)" }}>Aucune boutique</div>
           )}
 
-          {shops && installedShops.length > 1 && (
+          {shops && shops.length > 1 && (
             <button
               className={`switcher-option ${allShop?.active ? "active" : ""}`}
               onClick={() => !allShop?.active && switchTo("__all__")}
@@ -132,14 +130,14 @@ export default function ShopSwitcher({ currentShopName }: { currentShopName?: st
               <div style={{ display: "flex", flexDirection: "column", overflow: "hidden" }}>
                 <span style={{ fontWeight: 600 }}>Toutes les boutiques</span>
                 <span style={{ fontSize: "0.7rem", color: "var(--text-dim)" }}>
-                  {installedShops.length} boutiques agregees
+                  {shops.length} boutiques agregees
                 </span>
               </div>
               {allShop?.active && <span className="status-dot">ACTIVE</span>}
             </button>
           )}
 
-          {installedShops.map((shop) => (
+          {shops?.map((shop) => (
             <button
               key={shop.shop}
               className={`switcher-option ${shop.active ? "active" : ""}`}

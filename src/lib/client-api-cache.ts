@@ -9,18 +9,6 @@ type CacheEntry<T> = {
 const cache = new Map<string, CacheEntry<unknown>>();
 const DEFAULT_TTL = 30_000;
 
-function getCookieValue(name: string): string {
-  if (typeof document === "undefined") return "";
-  const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const match = document.cookie.match(new RegExp(`(?:^|; )${escapedName}=([^;]*)`));
-  return match ? decodeURIComponent(match[1]) : "";
-}
-
-function cacheKeyFor(url: string): string {
-  const shop = getCookieValue("ecomos_shop");
-  return `${url}|shop=${shop}`;
-}
-
 async function parseJsonResponse<T>(response: Response): Promise<T> {
   const json = await response.json().catch(() => null);
   if (!response.ok) {
@@ -35,8 +23,7 @@ async function parseJsonResponse<T>(response: Response): Promise<T> {
 
 export function cachedJson<T>(url: string, ttl = DEFAULT_TTL): Promise<T> {
   const now = Date.now();
-  const key = cacheKeyFor(url);
-  const entry = cache.get(key) as CacheEntry<T> | undefined;
+  const entry = cache.get(url) as CacheEntry<T> | undefined;
 
   if (entry?.value !== undefined && entry.expires > now) {
     return Promise.resolve(entry.value);
@@ -46,18 +33,18 @@ export function cachedJson<T>(url: string, ttl = DEFAULT_TTL): Promise<T> {
     return entry.promise;
   }
 
-  const promise = fetch(url, { cache: "no-store", credentials: "same-origin" })
+  const promise = fetch(url)
     .then((response) => parseJsonResponse<T>(response))
     .then((value) => {
-      cache.set(key, { value, expires: Date.now() + ttl });
+      cache.set(url, { value, expires: Date.now() + ttl });
       return value;
     })
     .catch((error) => {
-      cache.delete(key);
+      cache.delete(url);
       throw error;
     });
 
-  cache.set(key, { promise, expires: now + ttl });
+  cache.set(url, { promise, expires: now + ttl });
   return promise;
 }
 
