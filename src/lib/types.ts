@@ -46,7 +46,8 @@ export interface PaymentFee {
 }
 
 export interface ProductCost {
-  // Shopify variant ID (gid://shopify/ProductVariant/XXX) is the key
+  // SKU is the map key. Storing it here too keeps the data self-describing.
+  sku: string;
   productTitle: string; // denormalized for display
   variantTitle: string;
   price: number; // current selling price (from Shopify)
@@ -62,12 +63,12 @@ export interface ProductCost {
 export interface Bundle {
   id: string;
   name: string; // "Pack Ring + Lub offert"
-  // Shopify variant IDs that, when sold, trigger this bundle's extra items
-  triggerVariantIds: string[];
+  // SKUs that, when sold, trigger this bundle's extra items.
+  triggerSkus: string[];
   // Extra items included per trigger (real cost, even if customer pays $0 for them)
   items: {
-    variantId: string; // variant ID from Shopify (must exist in productCosts)
-    quantity: number;  // per 1 trigger sold
+    sku: string; // SKU (must exist in productCosts)
+    quantity: number; // per 1 trigger sold
   }[];
   active: boolean;
 }
@@ -134,7 +135,9 @@ export interface EcomConfig {
   shopifyFixedFeePerOrder?: number;
   // Monthly subscriptions prorated daily in profit calculations
   monthlySubscriptions?: MonthlySubscription[];
-  // COGS per variant (key: variant ID)
+  // COGS keyed by SKU. Sharing this across shops works because the same
+  // physical SKU is reused across stores even though each store assigns
+  // different Shopify variant IDs.
   productCosts?: Record<string, ProductCost>;
   // Bundles (e.g. "ring + free lube") — extra items that ship with each trigger variant sold
   bundles?: Bundle[];

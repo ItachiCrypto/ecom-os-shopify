@@ -89,8 +89,11 @@ export const ALL_SHOPS = "__all__";
 export const MASTER_SHOP = process.env.MASTER_SHOP || "56aqy8-pd.myshopify.com";
 
 // Fields that are shared/mirrored across all shops on save.
+// productCosts is shared because it's now SKU-keyed (the same SKU exists
+// across all shops, so a single COGS map applies everywhere).
+// bundles use SKUs too — also shared.
 // Per-shop fields (NOT mirrored): soldeInitial (each shop has its own
-// treasury balance), dailyAds, productCosts, adCampaigns, accessToken.
+// treasury balance), dailyAds, adCampaigns, accessToken.
 export const SHARED_CONFIG_FIELDS = [
   "shopifyPct",
   "shopifyFixe",
@@ -107,4 +110,5 @@ export const SHARED_CONFIG_FIELDS = [
   "monthlySubscriptions",
   "shippingCostByQty",
   "bundles",
+  "productCosts",
 ] as const;

@@ -321,22 +321,23 @@ function Profit() {
       return shippingBrackets[shippingBrackets.length - 1].cost;
     };
 
-    // Pre-compute bundle COGS per trigger variant (sum across bundles)
-    const bundleExtraCogsPerTrigger: Record<string, number> = {};
+    // Pre-compute bundle COGS per trigger SKU (sum across bundles)
+    const bundleExtraCogsPerTriggerSku: Record<string, number> = {};
     for (const b of bundles) {
       const bundleCogs = b.items.reduce((s, it) => {
-        const pc = productCosts[it.variantId];
+        const pc = productCosts[it.sku];
         return s + (pc?.cogs || 0) * it.quantity;
       }, 0);
-      for (const tid of b.triggerVariantIds) {
-        bundleExtraCogsPerTrigger[tid] = (bundleExtraCogsPerTrigger[tid] || 0) + bundleCogs;
+      for (const sku of b.triggerSkus) {
+        bundleExtraCogsPerTriggerSku[sku] = (bundleExtraCogsPerTriggerSku[sku] || 0) + bundleCogs;
       }
     }
 
-    // Active variants list (for dynamic columns)
+    // Active SKUs list (for dynamic columns). The map key is the SKU; the
+    // entry already carries it so we just spread.
     const activeVariants = Object.entries(productCosts)
       .filter(([, pc]) => pc.active)
-      .map(([variantId, pc]) => ({ variantId, ...pc }));
+      .map(([sku, pc]) => ({ ...pc, sku: pc.sku || sku }));
 
     // Filter orders by date range AND (when applicable) by the selected
     // campaign's attribution rules. Priority: UTM matching > country fallback.
@@ -440,18 +441,18 @@ function Profit() {
       for (const { node: li } of o.lineItems.edges) {
         orderTotalQty += li.quantity;
 
-        const variantId = li.variant?.id;
-        if (!variantId) continue;
-        const pc = productCosts[variantId];
-        // Only count if variant is tracked AND active
+        const sku = li.variant?.sku;
+        if (!sku) continue;
+        const pc = productCosts[sku];
+        // Only count if SKU is tracked AND active
         if (!pc || !pc.active) continue;
 
-        day.qtyByVariant[variantId] = (day.qtyByVariant[variantId] || 0) + li.quantity;
+        day.qtyByVariant[sku] = (day.qtyByVariant[sku] || 0) + li.quantity;
         // COGS = what the product costs us (even if customer got it free)
         day.cogs += li.quantity * pc.cogs;
 
         // Add bundle extras from manual config (ignored if Moon Bundles already handles it)
-        const bundleExtra = bundleExtraCogsPerTrigger[variantId] || 0;
+        const bundleExtra = bundleExtraCogsPerTriggerSku[sku] || 0;
         const isMoonBundleLine = (li.customAttributes || []).some((a) => a.key === "__moonbundle");
         if (bundleExtra > 0 && !isMoonBundleLine) {
           day.cogs += li.quantity * bundleExtra;
@@ -509,7 +510,7 @@ function Profit() {
         acc.profitBrut += d.profitBrut;
         acc.profitNet += d.profitNet;
         activeVariants.forEach((v) => {
-          acc.qtyByVariant[v.variantId] = (acc.qtyByVariant[v.variantId] || 0) + (d.qtyByVariant[v.variantId] || 0);
+          acc.qtyByVariant[v.sku] = (acc.qtyByVariant[v.sku] || 0) + (d.qtyByVariant[v.sku] || 0);
         });
         return acc;
       },

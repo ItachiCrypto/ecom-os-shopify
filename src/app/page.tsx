@@ -171,15 +171,15 @@ function Dashboard() {
     const tva = data.config.tva || 0;
     const totalTaxOnSalesRate = urssaf + ir + tva;
 
-    // Pre-compute bundle COGS per trigger variant
-    const bundleExtraCogsPerTrigger: Record<string, number> = {};
+    // Pre-compute bundle COGS per trigger SKU (sum across bundles)
+    const bundleExtraCogsPerTriggerSku: Record<string, number> = {};
     for (const b of bundles) {
       const bundleCogs = b.items.reduce((s, it) => {
-        const pc = productCosts[it.variantId];
+        const pc = productCosts[it.sku];
         return s + (pc?.cogs || 0) * it.quantity;
       }, 0);
-      for (const tid of b.triggerVariantIds) {
-        bundleExtraCogsPerTrigger[tid] = (bundleExtraCogsPerTrigger[tid] || 0) + bundleCogs;
+      for (const sku of b.triggerSkus) {
+        bundleExtraCogsPerTriggerSku[sku] = (bundleExtraCogsPerTriggerSku[sku] || 0) + bundleCogs;
       }
     }
 
@@ -204,12 +204,12 @@ function Dashboard() {
       let orderQty = 0;
       for (const { node: li } of o.lineItems.edges) {
         orderQty += li.quantity;
-        const variantId = li.variant?.id;
-        if (!variantId) continue;
-        const pc = productCosts[variantId];
+        const sku = li.variant?.sku;
+        if (!sku) continue;
+        const pc = productCosts[sku];
         if (!pc || !pc.active) continue;
         totalCogs += li.quantity * pc.cogs;
-        const bundleExtra = bundleExtraCogsPerTrigger[variantId] || 0;
+        const bundleExtra = bundleExtraCogsPerTriggerSku[sku] || 0;
         const isMoonBundleLine = (li.customAttributes || []).some((a) => a.key === "__moonbundle");
         if (bundleExtra > 0 && !isMoonBundleLine) {
           totalCogs += li.quantity * bundleExtra;

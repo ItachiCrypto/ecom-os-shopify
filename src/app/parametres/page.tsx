@@ -73,7 +73,9 @@ function Parametres() {
       cachedFetch<{ shop?: ShopInfo; markets?: ShopifyMarket[] }>("/api/shop", {
         onUpdate: (d) => apply(null, d, null),
       }).catch(() => null),
-      cachedFetch<{ products?: ShopifyProduct[] }>("/api/products", {
+      // ?all=true → aggregated products across every installed shop so the
+      // SKU-keyed COGS / bundles editor can see all variants in one place.
+      cachedFetch<{ products?: ShopifyProduct[] }>("/api/products?all=true", {
         onUpdate: (d) => apply(null, null, d),
       }).catch(() => ({ products: [] })),
     ]).then(([d, s, p]) => apply(d, s, p));
@@ -467,38 +469,54 @@ function ProductCostsSection({
   const [showInactive, setShowInactive] = useState(false);
   const costs = config.productCosts || {};
 
-  const updateVariant = (variantId: string, patch: Partial<ProductCost>) => {
-    const next = { ...costs, [variantId]: { ...costs[variantId], ...patch } as ProductCost };
+  const updateBySku = (sku: string, patch: Partial<ProductCost>) => {
+    const next = { ...costs, [sku]: { ...costs[sku], sku, ...patch } as ProductCost };
     onChange(next);
   };
 
+  // Flatten variants across every product (and every shop, when products
+  // come from /api/products?all=true), then deduplicate by SKU so the user
+  // edits each unique product cost once and it applies to every shop.
   const flattened = products.flatMap((p) =>
     p.variants.edges.map((e) => ({
-      variantId: e.node.id,
+      sku: e.node.sku || "",
       variantTitle: e.node.title,
-      sku: e.node.sku,
       price: parseFloat(e.node.price),
       productTitle: p.title,
       productStatus: p.status,
     }))
   );
+  // Group by SKU. Variants with no SKU are excluded — they can't be shared
+  // across shops. Surfacing them with a warning is a separate UX concern.
+  const seen = new Set<string>();
+  const dedupedBySku = flattened.filter((v) => {
+    if (!v.sku) return false;
+    if (seen.has(v.sku)) return false;
+    seen.add(v.sku);
+    return true;
+  });
 
-  const filtered = flattened.filter((v) => {
+  const filtered = dedupedBySku.filter((v) => {
     if (!showInactive && v.productStatus !== "ACTIVE") return false;
     if (search) {
       const s = search.toLowerCase();
-      return (v.productTitle + " " + v.variantTitle + " " + (v.sku || "")).toLowerCase().includes(s);
+      return (v.productTitle + " " + v.variantTitle + " " + v.sku).toLowerCase().includes(s);
     }
     return true;
   });
+  const variantsWithoutSku = flattened.filter((v) => !v.sku).length;
 
   return (
     <div className="card" style={{ gridColumn: "1 / -1" }}>
       <div style={{ marginBottom: "0.5rem" }}>
         <div style={{ fontSize: "1.05rem", fontWeight: 600 }}>💰 Coûts produits (COGS)</div>
         <div style={{ fontSize: "0.8rem", color: "var(--text-dim)", marginTop: "0.25rem", lineHeight: 1.5 }}>
-          Saisis juste combien te coûte chaque produit. Le CA des commandes vient automatiquement de Shopify —
-          on calcule ensuite la marge réelle en soustrayant tes COGS.
+          Saisis le coût de chaque SKU. <b>Une seule saisie par SKU</b> — le COGS s&apos;applique automatiquement à toutes les boutiques qui vendent ce SKU.
+          {variantsWithoutSku > 0 && (
+            <span style={{ color: "var(--orange)", display: "block", marginTop: "0.25rem" }}>
+              ⚠ {variantsWithoutSku} variantes Shopify n&apos;ont pas de SKU — elles ne sont pas listées et ne pourront pas avoir de COGS partagé tant qu&apos;elles n&apos;en ont pas.
+            </span>
+          )}
         </div>
       </div>
 
@@ -533,25 +551,25 @@ function ProductCostsSection({
             </thead>
             <tbody>
               {filtered.map((v) => {
-                const existing = costs[v.variantId];
+                const existing = costs[v.sku];
                 const cogsValue = existing?.cogs ?? 0;
                 const active = existing?.active ?? true;
                 return (
-                  <tr key={v.variantId}>
+                  <tr key={v.sku}>
                     <td>
                       <div style={{ fontWeight: 500, fontSize: "0.85rem" }}>{v.productTitle}</div>
                       {v.variantTitle !== "Default Title" && (
                         <div style={{ fontSize: "0.75rem", color: "var(--text-dim)" }}>{v.variantTitle}</div>
                       )}
                     </td>
-                    <td style={{ fontSize: "0.75rem", color: "var(--text-dim)" }} className="mono">{v.sku || "—"}</td>
+                    <td style={{ fontSize: "0.75rem", color: "var(--text-dim)" }} className="mono">{v.sku}</td>
                     <td style={{ textAlign: "right" }}>
                       <input
                         className="input mono"
                         type="number"
                         step="0.01"
                         value={cogsValue}
-                        onChange={(e) => updateVariant(v.variantId, {
+                        onChange={(e) => updateBySku(v.sku, {
                           productTitle: v.productTitle,
                           variantTitle: v.variantTitle,
                           price: v.price,
@@ -565,7 +583,7 @@ function ProductCostsSection({
                       <input
                         type="checkbox"
                         checked={active}
-                        onChange={(e) => updateVariant(v.variantId, {
+                        onChange={(e) => updateBySku(v.sku, {
                           productTitle: v.productTitle,
                           variantTitle: v.variantTitle,
                           price: v.price,
@@ -815,18 +833,25 @@ function BundlesSection({
   const bundles = config.bundles || [];
   const productCosts = config.productCosts || {};
 
-  // Flatten variants for dropdowns
-  const variants = products.flatMap((p) =>
-    p.variants.edges.map((e) => ({
-      variantId: e.node.id,
-      label: `${p.title}${e.node.title !== "Default Title" ? ` — ${e.node.title}` : ""}${e.node.sku ? ` (${e.node.sku})` : ""}`,
-    }))
-  );
+  // SKU-based variants for dropdowns. Variants without SKU are skipped
+  // because bundles must reference SKUs to share definitions across shops.
+  const variantsBySku = new Map<string, { sku: string; label: string }>();
+  for (const p of products) {
+    for (const e of p.variants.edges) {
+      const sku = e.node.sku;
+      if (!sku || variantsBySku.has(sku)) continue;
+      variantsBySku.set(sku, {
+        sku,
+        label: `${p.title}${e.node.title !== "Default Title" ? ` — ${e.node.title}` : ""} (${sku})`,
+      });
+    }
+  }
+  const variants = Array.from(variantsBySku.values());
 
   const addBundle = () => {
     onChange([
       ...bundles,
-      { id: uid(), name: "Nouveau bundle", triggerVariantIds: [], items: [], active: true },
+      { id: uid(), name: "Nouveau bundle", triggerSkus: [], items: [], active: true },
     ]);
   };
 
@@ -840,7 +865,7 @@ function BundlesSection({
 
   const bundleCogs = (b: Bundle): number => {
     return b.items.reduce((s, it) => {
-      const pc = productCosts[it.variantId];
+      const pc = productCosts[it.sku];
       return s + (pc?.cogs || 0) * it.quantity;
     }, 0);
   };
@@ -896,15 +921,15 @@ function BundlesSection({
                   </div>
                   <div style={{ maxHeight: 180, overflowY: "auto", padding: "0.35rem", background: "var(--bg)", borderRadius: 6, border: "1px solid var(--border)" }}>
                     {variants.map((v) => (
-                      <label key={v.variantId} style={{ display: "flex", alignItems: "center", gap: "0.35rem", fontSize: "0.8rem", padding: "0.2rem 0.1rem" }}>
+                      <label key={v.sku} style={{ display: "flex", alignItems: "center", gap: "0.35rem", fontSize: "0.8rem", padding: "0.2rem 0.1rem" }}>
                         <input
                           type="checkbox"
-                          checked={b.triggerVariantIds.includes(v.variantId)}
+                          checked={b.triggerSkus.includes(v.sku)}
                           onChange={(e) => {
                             const next = e.target.checked
-                              ? [...b.triggerVariantIds, v.variantId]
-                              : b.triggerVariantIds.filter((x) => x !== v.variantId);
-                            updateBundle(b.id, { triggerVariantIds: next });
+                              ? [...b.triggerSkus, v.sku]
+                              : b.triggerSkus.filter((x) => x !== v.sku);
+                            updateBundle(b.id, { triggerSkus: next });
                           }}
                         />
                         <span>{v.label}</span>
@@ -912,7 +937,7 @@ function BundlesSection({
                     ))}
                   </div>
                   <div style={{ fontSize: "0.7rem", color: "var(--text-faint)", marginTop: "0.25rem" }}>
-                    {b.triggerVariantIds.length} sélectionné(s)
+                    {b.triggerSkus.length} sélectionné(s)
                   </div>
                 </div>
 
@@ -926,7 +951,7 @@ function BundlesSection({
                       style={{ fontSize: "0.7rem", padding: "0.25rem 0.5rem" }}
                       onClick={() =>
                         updateBundle(b.id, {
-                          items: [...b.items, { variantId: variants[0]?.variantId || "", quantity: 1 }],
+                          items: [...b.items, { sku: variants[0]?.sku || "", quantity: 1 }],
                         })
                       }
                     >
@@ -940,23 +965,23 @@ function BundlesSection({
                   ) : (
                     <div style={{ display: "flex", flexDirection: "column", gap: "0.25rem" }}>
                       {b.items.map((it, idx) => {
-                        const pc = productCosts[it.variantId];
+                        const pc = productCosts[it.sku];
                         const cogs = pc?.cogs || 0;
                         return (
                           <div key={idx} style={{ display: "grid", gridTemplateColumns: "1fr 60px 90px auto", gap: "0.35rem", alignItems: "center" }}>
                             <select
                               className="select"
-                              value={it.variantId}
+                              value={it.sku}
                               onChange={(e) => {
                                 const next = [...b.items];
-                                next[idx] = { ...it, variantId: e.target.value };
+                                next[idx] = { ...it, sku: e.target.value };
                                 updateBundle(b.id, { items: next });
                               }}
                               style={{ fontSize: "0.8rem" }}
                             >
                               <option value="">— Choisir —</option>
                               {variants.map((v) => (
-                                <option key={v.variantId} value={v.variantId}>{v.label}</option>
+                                <option key={v.sku} value={v.sku}>{v.label}</option>
                               ))}
                             </select>
                             <input

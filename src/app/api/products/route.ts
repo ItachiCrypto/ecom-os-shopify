@@ -15,13 +15,20 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
   }
 
-  const hit = productCache.get(shop);
+  // ?all=true forces aggregation across every installed shop, even when the
+  // active cookie is a single shop. Used by Paramètres so the COGS / bundles
+  // editor can see SKUs from every store.
+  const url = new URL(request.url);
+  const forceAll = url.searchParams.get("all") === "true";
+  const effectiveShop = forceAll ? ALL_SHOPS : shop;
+
+  const hit = productCache.get(effectiveShop);
   if (hit && hit.expires > Date.now()) {
     return jsonSWR({ products: hit.data, cached: true }, { maxAge: 60, swr: 600 });
   }
 
   // ALL mode — merge products from every installed shop (each tagged with _shop)
-  if (shop === ALL_SHOPS) {
+  if (effectiveShop === ALL_SHOPS) {
     try {
       const installed = await listActiveShops();
       const perShop = await Promise.all(
@@ -35,7 +42,7 @@ export async function GET(request: NextRequest) {
         })
       );
       const merged = perShop.flat();
-      productCache.set(shop, { data: merged, expires: Date.now() + TTL });
+      productCache.set(effectiveShop, { data: merged, expires: Date.now() + TTL });
       return jsonSWR({ products: merged, mode: "all" }, { maxAge: 60, swr: 600 });
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Unknown error";
@@ -45,7 +52,7 @@ export async function GET(request: NextRequest) {
 
   try {
     const products = await getProducts(shop, 250);
-    productCache.set(shop, { data: products, expires: Date.now() + TTL });
+    productCache.set(effectiveShop, { data: products, expires: Date.now() + TTL });
     return jsonSWR({ products }, { maxAge: 60, swr: 600 });
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Unknown error";
