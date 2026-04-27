@@ -31,6 +31,11 @@ interface ShopSeed {
   shop: string;
   campaigns?: { name: string; color?: string; countries?: string[]; utmCampaigns?: string[]; utmSources?: string[] }[];
   spend?: Record<string, Record<string, number>>;
+  // Names of campaigns to delete from this shop's adCampaigns list. Their
+  // byCampaign entries should already have been zeroed via `spend`; this
+  // just removes the now-empty campaign definition so it stops cluttering
+  // the dropdown.
+  removeCampaigns?: string[];
 }
 
 function slugify(name: string): string {
@@ -78,6 +83,7 @@ export async function POST(request: NextRequest) {
     shop: string;
     campaignsCreated: string[];
     campaignsReused: string[];
+    campaignsRemoved?: string[];
     daysWritten: number;
     error?: string;
   }[] = [];
@@ -160,11 +166,26 @@ export async function POST(request: NextRequest) {
         }
       }
 
+      // Remove any campaigns the caller asked us to drop (after spends were
+      // zeroed). Filtering by name keeps it user-friendly.
+      const removedNames = (seed.removeCampaigns || []).map((n) => n.toLowerCase());
+      let finalCampaigns = existingCampaigns;
+      const removed: string[] = [];
+      if (removedNames.length > 0) {
+        finalCampaigns = existingCampaigns.filter((c) => {
+          if (removedNames.includes(c.name.toLowerCase())) {
+            removed.push(c.name);
+            return false;
+          }
+          return true;
+        });
+      }
+
       await saveShopData({
         ...data,
         config: {
           ...data.config,
-          adCampaigns: existingCampaigns,
+          adCampaigns: finalCampaigns,
           dailyAds,
         },
       });
@@ -173,6 +194,7 @@ export async function POST(request: NextRequest) {
         shop: seed.shop,
         campaignsCreated: created,
         campaignsReused: reused,
+        ...(removed.length ? { campaignsRemoved: removed } : {}),
         daysWritten,
       });
     } catch (e) {
