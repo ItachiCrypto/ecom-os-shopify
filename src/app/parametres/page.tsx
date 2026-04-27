@@ -50,6 +50,7 @@ function Parametres() {
   const [products, setProducts] = useState<ShopifyProduct[]>([]);
   const [dirty, setDirty] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   useEffect(() => {
     let mounted = true;
@@ -85,10 +86,25 @@ function Parametres() {
   useEffect(() => {
     if (!dirty || !config) return;
     const t = setTimeout(async () => {
-      await fetch("/api/data", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ config }) });
-      invalidate("/api/data");
-      setDirty(false); setSaved(true);
-      setTimeout(() => setSaved(false), 1500);
+      try {
+        const res = await fetch("/api/data", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ config }),
+        });
+        if (!res.ok) {
+          const j = await res.json().catch(() => ({}));
+          throw new Error(j.error || `Save failed (${res.status})`);
+        }
+        invalidate("/api/data");
+        setSaveError(null);
+        setDirty(false);
+        setSaved(true);
+        setTimeout(() => setSaved(false), 1500);
+      } catch (e) {
+        setSaveError(e instanceof Error ? e.message : "Save error");
+        // Keep dirty so the user knows there are unsaved changes.
+      }
     }, 300);
     return () => clearTimeout(t);
   }, [config, dirty]);
@@ -110,7 +126,12 @@ function Parametres() {
             </div>
           )}
         </div>
-        {saved && <div className="pill pill-green">Sauvegardé</div>}
+        {saved && !saveError && <div className="pill pill-green">Sauvegardé</div>}
+        {saveError && (
+          <div className="pill" style={{ background: "rgba(248,113,113,0.15)", color: "var(--red)", border: "1px solid var(--red)" }}>
+            ⚠ {saveError}
+          </div>
+        )}
       </div>
 
       {/* Infos Shopify en lecture seule */}
@@ -206,6 +227,7 @@ function Parametres() {
         <CampaignsSection
           config={config}
           countries={countries}
+          isAllMode={shopInfo?.myshopifyDomain === "__all__"}
           onChange={(adCampaigns) => set({ adCampaigns })}
         />
 
@@ -568,13 +590,58 @@ function uid() { return Math.random().toString(36).slice(2, 10); }
 function CampaignsSection({
   config,
   countries,
+  isAllMode,
   onChange,
 }: {
   config: EcomConfig;
   countries: { id: string; name: string; code: string; currency: { currencyCode: string } }[];
+  isAllMode: boolean;
   onChange: (campaigns: AdCampaign[]) => void;
 }) {
   const campaigns = config.adCampaigns || [];
+
+  if (isAllMode) {
+    // In ALL mode the merged campaigns list mixes ids from every shop —
+    // saving back to master would corrupt them. Force the user to switch
+    // to a specific shop before editing.
+    return (
+      <div className="card" style={{ gridColumn: "1 / -1", borderColor: "var(--accent)", background: "rgba(200, 165, 90, 0.05)" }}>
+        <div style={{ fontSize: "1.05rem", fontWeight: 600, marginBottom: "0.5rem" }}>
+          📢 Campagnes publicitaires
+        </div>
+        <div style={{ fontSize: "0.85rem", color: "var(--text-dim)", lineHeight: 1.6, marginBottom: "0.5rem" }}>
+          Les campagnes sont définies <b>par boutique</b>. Pour les ajouter / éditer, sélectionne une boutique spécifique dans le sélecteur en haut à gauche, puis reviens sur Paramètres.
+        </div>
+        {campaigns.length > 0 && (
+          <div style={{ marginTop: "0.75rem" }}>
+            <div style={{ fontSize: "0.7rem", color: "var(--text-dim)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: "0.4rem" }}>
+              Campagnes actuellement définies (lecture seule)
+            </div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: "0.4rem" }}>
+              {campaigns.map((c) => (
+                <span
+                  key={c.id}
+                  style={{
+                    padding: "0.25rem 0.6rem",
+                    fontSize: "0.78rem",
+                    border: "1px solid var(--border)",
+                    borderRadius: 999,
+                    background: c.color ? `${c.color}22` : "transparent",
+                    borderColor: c.active ? (c.color || "var(--border)") : "var(--border)",
+                    opacity: c.active ? 1 : 0.5,
+                  }}
+                  title={c.countries?.length ? `Pays: ${c.countries.join(", ")}` : "Pas de filtre géo"}
+                >
+                  {c.name}
+                  {c.countries?.length ? <span style={{ marginLeft: "0.35rem", fontSize: "0.7rem", color: "var(--text-dim)" }}>({c.countries.join(",")})</span> : null}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
 
   const add = () => {
     onChange([
