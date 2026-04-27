@@ -8,7 +8,7 @@ function shopCookieRedirect(originUrl: URL, shop: string) {
   response.cookies.set(SHOP_COOKIE, shop, {
     httpOnly: false,
     secure: process.env.NODE_ENV === "production",
-    sameSite: "lax",
+    sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
     maxAge: 60 * 60 * 24 * 30,
     path: "/",
   });
