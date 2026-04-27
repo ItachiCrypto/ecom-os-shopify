@@ -14,6 +14,10 @@ export function jsonSWR<T>(
     status,
     headers: {
       "Cache-Control": `private, max-age=${maxAge}, stale-while-revalidate=${swr}`,
+      // Critical: every cached endpoint depends on the active-shop cookie.
+      // Without `Vary: Cookie`, the browser would happily serve a previous
+      // shop's response after the user switches shops (same URL).
+      Vary: "Cookie",
     },
   });
 }
