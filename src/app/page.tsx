@@ -242,6 +242,26 @@ function Dashboard() {
     const profitNetPct = totalSales > 0 ? (profitNet / totalSales) * 100 : 0;
     const roas = totalAdsHT > 0 ? totalSales / totalAdsHT : 0;
 
+    // Break-even ROAS — the average ratio Sales / AdsHT needed for Profit Net = 0.
+    //
+    // Profit Net = Sales - AdsHT*(1+taxAds) - cogsRatio*Sales - taxRate*Sales - fixedCosts = 0
+    // With Sales = R * AdsHT and grossMargin = 1 - cogsRatio - taxRate:
+    //   R = (1 + taxAds) / grossMargin                       (marginal — each extra ad € is profitable above this)
+    //     + fixedCosts / (AdsHT * grossMargin)               (extra to cover the period's fixed costs)
+    //
+    // If grossMargin <= 0 (COGS + taxes already eat all sales), no ROAS will save the shop → mark as infinite.
+    const cogsRatio = totalSales > 0 ? totalCogs / totalSales : 0;
+    const taxRateDec = totalTaxOnSalesRate / 100;
+    const taxAdsDec = taxOnAdSpend / 100;
+    const grossMargin = 1 - cogsRatio - taxRateDec;
+    const beRoasMarginal = grossMargin > 0 ? (1 + taxAdsDec) / grossMargin : Infinity;
+    const beRoasNet =
+      grossMargin > 0
+        ? totalAdsHT > 0
+          ? ((1 + taxAdsDec) * totalAdsHT + fixedCosts) / (grossMargin * totalAdsHT)
+          : beRoasMarginal // No ads spent → fall back to the per-order break-even
+        : Infinity;
+
     // Solde = solde initial + profit net on this period
     const solde = data.config.soldeInitial + profitNet;
 
@@ -285,6 +305,9 @@ function Dashboard() {
       profitNet,
       profitNetPct,
       roas,
+      beRoasNet,
+      beRoasMarginal,
+      cogsRatio,
       solde,
       runway,
       objCaPct,
@@ -390,10 +413,24 @@ function Dashboard() {
 
         <div className="kpi">
           <div className="kpi-label">ROAS</div>
-          <div className={`kpi-value ${stats.roas > 1.5 ? "green" : stats.roas > 1 ? "orange" : "red"}`}>
+          <div className={`kpi-value ${stats.roas >= stats.beRoasNet ? "green" : stats.roas >= stats.beRoasMarginal ? "orange" : "red"}`}>
             {stats.roas.toFixed(2)}
           </div>
           <div className="kpi-delta">Sales / Ads HT</div>
+        </div>
+
+        <div className="kpi">
+          <div className="kpi-label">ROAS BE net</div>
+          <div className={`kpi-value ${stats.roas >= stats.beRoasNet ? "green" : "orange"}`} style={{ color: undefined }}>
+            {Number.isFinite(stats.beRoasNet) ? stats.beRoasNet.toFixed(2) : "∞"}
+          </div>
+          <div className="kpi-delta" style={{ lineHeight: 1.4 }}>
+            Seuil pour Profit Net = 0
+            <br />
+            <span style={{ color: "var(--text-faint)" }}>
+              marginal: {Number.isFinite(stats.beRoasMarginal) ? stats.beRoasMarginal.toFixed(2) : "∞"} · COGS {(stats.cogsRatio * 100).toFixed(0)}%
+            </span>
+          </div>
         </div>
 
         <div className="kpi">
