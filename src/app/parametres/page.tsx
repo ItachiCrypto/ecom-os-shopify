@@ -672,7 +672,7 @@ function CampaignsSection({
         <div>
           <div style={{ fontSize: "1.05rem", fontWeight: 600 }}>📢 Campagnes publicitaires</div>
           <div style={{ fontSize: "0.75rem", color: "var(--text-dim)", marginTop: "0.25rem", lineHeight: 1.5 }}>
-            Définis tes campagnes Meta/Google et les pays qu&apos;elles ciblent. Sur <b>Profit Journalier</b>, choisir une campagne filtrera à la fois son spend ET les ventes des pays ciblés — ROAS réel par géo. Sans pays = pas de filtre géo.
+            Définis tes campagnes Meta/Google. L&apos;attribution la plus précise se fait par <b>UTM</b> : ajoute les valeurs <span className="mono">utm_campaign</span> que tu utilises (ex: <span className="mono">us_prospecting</span>). Tes ventes seront associées à la campagne via le tracking UTM Shopify (firstVisit / lastVisit). Tu peux aussi cibler par pays comme filtre de fallback.
           </div>
         </div>
         <button className="btn btn-primary" onClick={add}>+ Ajouter</button>
@@ -722,9 +722,45 @@ function CampaignsSection({
                   </label>
                   <button className="btn" onClick={() => remove(c.id)} title="Supprimer">✕</button>
                 </div>
+                <div style={{ marginTop: "0.5rem", display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.6rem" }}>
+                  <label style={{ fontSize: "0.7rem", color: "var(--text-dim)", textTransform: "uppercase", letterSpacing: "0.05em", display: "flex", flexDirection: "column", gap: "0.25rem" }}>
+                    UTM campaign (séparées par virgule)
+                    <input
+                      className="input"
+                      value={(c.utmCampaigns || []).join(", ")}
+                      onChange={(e) =>
+                        update(c.id, {
+                          utmCampaigns: e.target.value
+                            .split(",")
+                            .map((s) => s.trim())
+                            .filter(Boolean),
+                        })
+                      }
+                      placeholder="ex: us_prospecting, us_retargeting"
+                      style={{ fontSize: "0.78rem", textTransform: "none", letterSpacing: "normal" }}
+                    />
+                  </label>
+                  <label style={{ fontSize: "0.7rem", color: "var(--text-dim)", textTransform: "uppercase", letterSpacing: "0.05em", display: "flex", flexDirection: "column", gap: "0.25rem" }}>
+                    UTM source (optionnel)
+                    <input
+                      className="input"
+                      value={(c.utmSources || []).join(", ")}
+                      onChange={(e) =>
+                        update(c.id, {
+                          utmSources: e.target.value
+                            .split(",")
+                            .map((s) => s.trim())
+                            .filter(Boolean),
+                        })
+                      }
+                      placeholder="ex: facebook, ig"
+                      style={{ fontSize: "0.78rem", textTransform: "none", letterSpacing: "normal" }}
+                    />
+                  </label>
+                </div>
                 <div style={{ marginTop: "0.5rem" }}>
                   <div style={{ fontSize: "0.7rem", color: "var(--text-dim)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: "0.3rem" }}>
-                    Pays ciblés ({selected.size})
+                    Pays ciblés ({selected.size}) — fallback si pas d&apos;UTM
                   </div>
                   {countries.length === 0 ? (
                     <div style={{ fontSize: "0.75rem", color: "var(--text-faint)", fontStyle: "italic" }}>

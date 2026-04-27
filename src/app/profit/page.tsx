@@ -24,6 +24,20 @@ interface LineItem {
   discountedTotalSet: Money;
   customAttributes: { key: string; value: string }[];
 }
+interface UtmParameters {
+  campaign?: string | null;
+  source?: string | null;
+  medium?: string | null;
+  content?: string | null;
+  term?: string | null;
+}
+interface Visit {
+  source?: string | null;
+  sourceType?: string | null;
+  referrerUrl?: string | null;
+  landingPage?: string | null;
+  utmParameters?: UtmParameters | null;
+}
 interface Order {
   id: string;
   name: string;
@@ -31,6 +45,7 @@ interface Order {
   currentTotalPriceSet: Money;
   totalRefundedSet: Money;
   shippingAddress: { countryCodeV2?: string } | null;
+  customerJourneySummary?: { firstVisit?: Visit | null; lastVisit?: Visit | null } | null;
   lineItems: { edges: { node: LineItem }[] };
   customAttributes?: { key: string; value: string }[];
 }
@@ -263,19 +278,58 @@ function Profit() {
       .map(([variantId, pc]) => ({ variantId, ...pc }));
 
     // Filter orders by date range AND (when applicable) by the selected
-    // campaign's targeted countries — so a US-only campaign's row shows
-    // only US sales / COGS / ROAS.
-    const campaignCountries: Set<string> | null = (() => {
-      if (campaignFilter === CAMPAIGN_ALL || campaignFilter === CAMPAIGN_FLAT) return null;
-      const c = activeCampaigns.find((x) => x.id === campaignFilter);
-      if (!c?.countries || c.countries.length === 0) return null;
-      return new Set(c.countries.map((x) => x.toUpperCase()));
-    })();
+    // campaign's attribution rules. Priority: UTM matching > country fallback.
+    const selectedCampaign =
+      campaignFilter === CAMPAIGN_ALL || campaignFilter === CAMPAIGN_FLAT
+        ? null
+        : activeCampaigns.find((x) => x.id === campaignFilter) || null;
+
+    const utmCampaigns: Set<string> | null = selectedCampaign?.utmCampaigns?.length
+      ? new Set(selectedCampaign.utmCampaigns.map((x) => x.toLowerCase()))
+      : null;
+    const utmSources: Set<string> | null = selectedCampaign?.utmSources?.length
+      ? new Set(selectedCampaign.utmSources.map((x) => x.toLowerCase()))
+      : null;
+    const campaignCountries: Set<string> | null = selectedCampaign?.countries?.length
+      ? new Set(selectedCampaign.countries.map((x) => x.toUpperCase()))
+      : null;
+    const useUtmMatch = !!(utmCampaigns || utmSources);
+
+    const matchOrderToCampaign = (o: Order): boolean => {
+      if (!selectedCampaign) return true;
+
+      if (useUtmMatch) {
+        // Match if EITHER first-visit OR last-visit UTM hits one of the
+        // configured patterns. Both fields are checked so we don't miss
+        // orders attributed via either the entry or the conversion touch.
+        const visits = [o.customerJourneySummary?.firstVisit, o.customerJourneySummary?.lastVisit];
+        for (const v of visits) {
+          const utm = v?.utmParameters;
+          if (!utm) continue;
+          const c = utm.campaign?.toLowerCase() || "";
+          const s = utm.source?.toLowerCase() || "";
+          const campaignHit = utmCampaigns ? utmCampaigns.has(c) : false;
+          const sourceHit = utmSources ? utmSources.has(s) : false;
+          // OR: any configured pattern matches.
+          if (campaignHit || sourceHit) return true;
+        }
+        // No UTM match — fall back to country if configured, otherwise reject.
+        if (!campaignCountries) return false;
+      }
+
+      if (campaignCountries) {
+        const code = o.shippingAddress?.countryCodeV2?.toUpperCase();
+        return code ? campaignCountries.has(code) : false;
+      }
+
+      // Campaign with no UTM and no country = matches all orders (campaign
+      // only filters its own spend, not the order set).
+      return true;
+    };
+
     const filteredOrders = orders.filter((o) => {
       if (!inRange(o.createdAt, range, timeZone)) return false;
-      if (!campaignCountries) return true;
-      const code = o.shippingAddress?.countryCodeV2?.toUpperCase();
-      return code ? campaignCountries.has(code) : false;
+      return matchOrderToCampaign(o);
     });
 
     // Resolve the spend that matches the active campaign filter for a given
@@ -576,10 +630,15 @@ function Profit() {
             {(() => {
               if (campaignFilter === CAMPAIGN_ALL || campaignFilter === CAMPAIGN_FLAT) return null;
               const c = activeCampaigns.find((x) => x.id === campaignFilter);
-              if (!c?.countries || c.countries.length === 0) return null;
+              if (!c) return null;
+              const parts: string[] = [];
+              if (c.utmCampaigns?.length) parts.push(`UTM: ${c.utmCampaigns.join(", ")}`);
+              if (c.utmSources?.length) parts.push(`src: ${c.utmSources.join(", ")}`);
+              if (c.countries?.length) parts.push(`pays: ${c.countries.join(", ")}`);
+              if (parts.length === 0) return null;
               return (
                 <span style={{ marginLeft: "0.6rem", color: "var(--accent)" }}>
-                  · Filtré: {c.countries.join(", ")}
+                  · Filtré · {parts.join(" · ")}
                 </span>
               );
             })()}

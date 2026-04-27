@@ -56,6 +56,22 @@ const ORDERS_QUERY = `
           displayFulfillmentStatus
           customer { firstName lastName email }
           shippingAddress { country countryCodeV2 province }
+          customerJourneySummary {
+            firstVisit {
+              source
+              sourceType
+              referrerUrl
+              landingPage
+              utmParameters { campaign source medium content term }
+            }
+            lastVisit {
+              source
+              sourceType
+              referrerUrl
+              landingPage
+              utmParameters { campaign source medium content term }
+            }
+          }
           currentTotalPriceSet { shopMoney { amount currencyCode } }
           totalPriceSet { shopMoney { amount currencyCode } }
           subtotalPriceSet { shopMoney { amount currencyCode } }

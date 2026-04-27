@@ -88,11 +88,18 @@ export interface AdCampaign {
   name: string;
   color?: string; // optional UI tag (CSS color)
   active: boolean;
-  // ISO 3166-1 alpha-2 country codes targeted by this campaign (e.g. ["US"]
-  // for a US campaign, ["MX","ES"] for Hispanic). When a campaign has
-  // countries, filtering by it on the Profit page also restricts the orders
-  // (sales/COGS/ROAS) to those geographies. Empty/missing = no geo filter.
+  // ISO 3166-1 alpha-2 country codes targeted by this campaign. Used as a
+  // fallback / coarse filter when no UTM attribution is configured.
   countries?: string[];
+  // utm_campaign values that map to this campaign (case-insensitive). When
+  // set, an order is attributed to this campaign if its first-visit OR
+  // last-visit utm_campaign matches any of these values. This is the most
+  // accurate way to know which campaign actually drove the sale.
+  utmCampaigns?: string[];
+  // utm_source values that map to this campaign (e.g. "facebook", "google").
+  // Used in combination with utmCampaigns: an order matches when any UTM
+  // pattern matches.
+  utmSources?: string[];
 }
 
 /**
