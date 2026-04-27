@@ -75,6 +75,17 @@ type DailyAds = Record<string, DailyAdEntry>;
 type DailyAdsByShop = Record<string, DailyAds>;
 type CampaignsByShop = Record<string, AdCampaign[]>;
 
+interface MarketRegion { node: { code: string; name: string } }
+interface ShopifyMarketLite {
+  id: string;
+  name: string;
+  handle: string;
+  enabled: boolean;
+  primary: boolean;
+  regions: { edges: MarketRegion[] };
+}
+type MarketsByShop = Record<string, ShopifyMarketLite[]>;
+
 // Sentinel filter values
 const CAMPAIGN_ALL = "__all_campaigns__";
 const CAMPAIGN_FLAT = "__flat__"; // legacy entries (no breakdown)
@@ -91,6 +102,7 @@ function Profit() {
   const [editableShop, setEditableShop] = useState("");
   const [dailyAdsByShop, setDailyAdsByShop] = useState<DailyAdsByShop>({});
   const [campaignsByShop, setCampaignsByShop] = useState<CampaignsByShop>({});
+  const [marketsByShop, setMarketsByShop] = useState<MarketsByShop>({});
   const [campaignFilter, setCampaignFilter] = useState<string>(CAMPAIGN_ALL);
   const [pendingAdSaves, setPendingAdSaves] = useState<
     Record<string, { shop?: string; date: string; spend: number; notes?: string; campaignId?: string }>
@@ -109,6 +121,7 @@ function Profit() {
             dailyAdsByShop?: DailyAdsByShop;
             editableShop?: string;
             campaignsByShop?: CampaignsByShop;
+            marketsByShop?: MarketsByShop;
           }
         | null
     ) => {
@@ -121,6 +134,7 @@ function Profit() {
       if (ads?.dailyAdsByShop) setDailyAdsByShop(ads.dailyAdsByShop);
       if (ads?.editableShop) setEditableShop(ads.editableShop);
       if (ads?.campaignsByShop) setCampaignsByShop(ads.campaignsByShop);
+      if (ads?.marketsByShop) setMarketsByShop(ads.marketsByShop);
     };
 
     Promise.all([
@@ -139,6 +153,7 @@ function Profit() {
         dailyAdsByShop?: DailyAdsByShop;
         editableShop?: string;
         campaignsByShop?: CampaignsByShop;
+        marketsByShop?: MarketsByShop;
       }>("/api/ad-spend", { onUpdate: (d) => apply(null, null, null, d) }).catch(() => null),
     ]).then(([o, d, s, ads]) => apply(o, d, s, ads));
 
@@ -186,9 +201,49 @@ function Profit() {
     return merged;
   };
 
-  // Active campaign list for the currently editable shop (falls back to all
-  // campaigns across all shops in non-all mode).
-  const activeCampaigns: AdCampaign[] = useMemo(() => {
+  // Synthesize an AdCampaign from a Shopify Market — its filter "countries"
+  // are the market's regions. id = "mkt:<handle>" so it doesn't collide with
+  // manually-created campaigns. In ALL mode, prefix with shop so each market
+  // becomes uniquely scoped.
+  const marketAsCampaign = (
+    m: ShopifyMarketLite,
+    shopPrefix: string | null
+  ): AdCampaign => {
+    const countries = (m.regions?.edges || [])
+      .map((e) => e.node?.code)
+      .filter((c): c is string => !!c);
+    const baseId = `mkt:${m.handle || m.id}`;
+    return {
+      id: shopPrefix ? `${shopPrefix}:${baseId}` : baseId,
+      name: shopPrefix
+        ? `${m.name} · ${shopPrefix.replace(".myshopify.com", "")}`
+        : m.name,
+      active: m.enabled !== false,
+      countries,
+    };
+  };
+
+  // Markets exposed as filterable scopes (auto-generated from Shopify Markets,
+  // separate from the user-defined manual campaigns).
+  const marketCampaigns: AdCampaign[] = useMemo(() => {
+    if (isAllMode) {
+      const list: AdCampaign[] = [];
+      for (const [shop, ms] of Object.entries(marketsByShop)) {
+        for (const m of ms || []) {
+          if (m.enabled === false) continue;
+          list.push(marketAsCampaign(m, shop));
+        }
+      }
+      return list;
+    }
+    const myShop = shops[0]?.shop || "";
+    return (marketsByShop[myShop] || [])
+      .filter((m) => m.enabled !== false)
+      .map((m) => marketAsCampaign(m, null));
+  }, [isAllMode, marketsByShop, shops]);
+
+  // Manual campaigns (user-defined, with UTM matching).
+  const manualCampaigns: AdCampaign[] = useMemo(() => {
     if (isAllMode) {
       const list: AdCampaign[] = [];
       for (const [shop, cs] of Object.entries(campaignsByShop)) {
@@ -203,9 +258,15 @@ function Profit() {
       }
       return list;
     }
-    const cs = (data?.config.adCampaigns || []).filter((c) => c.active);
-    return cs;
+    return (data?.config.adCampaigns || []).filter((c) => c.active);
   }, [isAllMode, campaignsByShop, data]);
+
+  // All filterable scopes — markets first, then manual. Used by the cell
+  // editor and the order matcher.
+  const activeCampaigns: AdCampaign[] = useMemo(
+    () => [...marketCampaigns, ...manualCampaigns],
+    [marketCampaigns, manualCampaigns]
+  );
 
   // Debounced save on daily ad spend edits — sent as a single batch so the server
   // can read+write each shop's blob exactly once (avoids the lost-write race).
@@ -652,13 +713,24 @@ function Profit() {
               className="select"
               value={campaignFilter}
               onChange={(e) => setCampaignFilter(e.target.value)}
-              style={{ minWidth: 220 }}
+              style={{ minWidth: 240 }}
             >
               <option value={CAMPAIGN_ALL}>Toutes les campagnes</option>
               {activeCampaigns.length > 0 && <option value={CAMPAIGN_FLAT}>Sans campagne (saisie globale)</option>}
-              {activeCampaigns.map((c) => (
-                <option key={c.id} value={c.id}>{c.name}</option>
-              ))}
+              {marketCampaigns.length > 0 && (
+                <optgroup label="🌍 Marchés Shopify">
+                  {marketCampaigns.map((c) => (
+                    <option key={c.id} value={c.id}>{c.name}</option>
+                  ))}
+                </optgroup>
+              )}
+              {manualCampaigns.length > 0 && (
+                <optgroup label="📢 Campagnes manuelles">
+                  {manualCampaigns.map((c) => (
+                    <option key={c.id} value={c.id}>{c.name}</option>
+                  ))}
+                </optgroup>
+              )}
             </select>
           </label>
           <button

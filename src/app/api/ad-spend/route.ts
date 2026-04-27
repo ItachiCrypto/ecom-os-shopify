@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { ALL_SHOPS, MASTER_SHOP, SHOP_COOKIE } from "@/lib/config";
 import { jsonSWR } from "@/lib/http";
+import { getCachedMarkets, type ShopifyMarketLite } from "@/lib/markets";
 import { getShopData, listActiveShops, saveShopData } from "@/lib/storage";
 import type { DailyAdEntry } from "@/lib/types";
 
@@ -45,12 +46,18 @@ export async function GET(request: NextRequest) {
   const shops = activeShop === ALL_SHOPS ? installed : [activeShop];
   const dailyAdsByShop: Record<string, Record<string, DailyAdEntry>> = {};
   const campaignsByShop: Record<string, NonNullable<Awaited<ReturnType<typeof getShopData>>>["config"]["adCampaigns"]> = {};
+  const marketsByShop: Record<string, ShopifyMarketLite[]> = {};
 
-  for (const shop of shops) {
-    const data = await getShopData(shop);
-    dailyAdsByShop[shop] = normalizeDailyAds(data?.config.dailyAds);
-    campaignsByShop[shop] = data?.config.adCampaigns || [];
-  }
+  // Fetch shop blob + Shopify Markets in parallel per shop. Markets are
+  // cached for 1h so repeat calls are cheap.
+  await Promise.all(
+    shops.map(async (shop) => {
+      const [data, markets] = await Promise.all([getShopData(shop), getCachedMarkets(shop)]);
+      dailyAdsByShop[shop] = normalizeDailyAds(data?.config.dailyAds);
+      campaignsByShop[shop] = data?.config.adCampaigns || [];
+      marketsByShop[shop] = markets;
+    })
+  );
 
   return jsonSWR(
     {
@@ -63,6 +70,7 @@ export async function GET(request: NextRequest) {
       })),
       dailyAdsByShop,
       campaignsByShop,
+      marketsByShop,
     },
     { maxAge: 30, swr: 300 }
   );
