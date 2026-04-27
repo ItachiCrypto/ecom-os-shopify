@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@shopify/shopify-api": "^13.0.0",
+    "@upstash/redis": "^1.34.0",
     "@vercel/blob": "^2.3.3",
     "chart.js": "^4.5.1",
     "date-fns": "^4.1.0",
