@@ -142,12 +142,15 @@ export async function POST(request: NextRequest) {
           } else {
             byCampaign[cid] = { spend };
           }
-          if (Object.keys(byCampaign).length === 0) {
-            delete cur.byCampaign;
-          } else {
-            cur.byCampaign = byCampaign;
-          }
+          // Always recompute spend from the breakdown so deleting the last
+          // campaign correctly resets the flat total to 0 — the previous
+          // flow skipped recomputeTotal when byCampaign became empty,
+          // leaving stale flat spend values on shops.
+          cur.byCampaign = byCampaign;
           const next = recomputeTotal(cur);
+          if (Object.keys(byCampaign).length === 0) {
+            delete next.byCampaign;
+          }
           if (!next.byCampaign && next.spend === 0 && !next.notes) {
             delete dailyAds[date];
           } else {
