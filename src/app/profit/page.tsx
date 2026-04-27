@@ -598,7 +598,7 @@ function Profit() {
                 Mode &quot;Toutes les boutiques&quot;
               </div>
               <div style={{ fontSize: "0.85rem", color: "var(--text-dim)", lineHeight: 1.5 }}>
-                Les calculs utilisent la somme exacte des boutiques. Le champ modifie seulement le spend HT de la boutique selectionnee, jour par jour.
+                Les calculs utilisent la somme exacte des boutiques (converties en {currency}). En mode &quot;Toutes les campagnes&quot;, la cellule de spend est en lecture seule — choisis une campagne (ou &quot;Sans campagne&quot; + boutique à éditer) pour saisir un montant.
               </div>
             </div>
             <label style={{ minWidth: 240, fontSize: "0.75rem", color: "var(--text-dim)", textTransform: "uppercase", letterSpacing: "0.05em" }}>
@@ -748,20 +748,44 @@ function Profit() {
                   <td style={{ textAlign: "center", color: "var(--text-dim)" }}>{d.orders || "—"}</td>
                   <td style={{ textAlign: "right" }}>
                     <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end" }}>
-                      <input
-                        type="number"
-                        step="0.01"
-                        className="input mono"
-                        value={editableSpend || ""}
-                        onChange={(e) => updateAdSpend(d.date, parseFloat(e.target.value) || 0, editableNotes)}
-                        placeholder="0 (HT)"
-                        style={{ maxWidth: 100, textAlign: "right", fontSize: "0.8rem" }}
-                        title={
-                          editingPerCampaign
-                            ? "Spend HT pour la campagne sélectionnée"
-                            : "Saisis le montant HT - le TTC est calculé automatiquement"
-                        }
-                      />
+                      {/* In ALL mode + "Toutes les campagnes", showing one shop's
+                          value while the total below shows the sum is misleading.
+                          Disable the input here — to edit, the user picks a specific
+                          campaign (or "Sans campagne" + a target shop). */}
+                      {isAllMode && scope === CAMPAIGN_ALL ? (
+                        <div
+                          className="mono"
+                          style={{
+                            maxWidth: 100,
+                            textAlign: "right",
+                            fontSize: "0.8rem",
+                            padding: "0.4rem 0.55rem",
+                            color: "var(--text-faint)",
+                            border: "1px dashed var(--border)",
+                            borderRadius: 4,
+                            background: "transparent",
+                            width: "100%",
+                          }}
+                          title="Filtre par campagne (ou Sans campagne) pour éditer"
+                        >
+                          —
+                        </div>
+                      ) : (
+                        <input
+                          type="number"
+                          step="0.01"
+                          className="input mono"
+                          value={editableSpend || ""}
+                          onChange={(e) => updateAdSpend(d.date, parseFloat(e.target.value) || 0, editableNotes)}
+                          placeholder="0 (HT)"
+                          style={{ maxWidth: 100, textAlign: "right", fontSize: "0.8rem" }}
+                          title={
+                            editingPerCampaign
+                              ? "Spend HT pour la campagne sélectionnée"
+                              : "Saisis le montant HT - le TTC est calculé automatiquement"
+                          }
+                        />
+                      )}
                       {editingPerCampaign && (fullEntry?.spend || 0) > (editableSpend || 0) && (
                         <div className="mono" style={{ fontSize: "0.65rem", marginTop: "0.15rem", color: "var(--text-dim)" }}>
                           Autres campagnes: {fmtMoney((fullEntry?.spend || 0) - (editableSpend || 0), currency)}
