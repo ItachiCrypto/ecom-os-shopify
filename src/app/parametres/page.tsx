@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from "react";
 import Shell from "@/components/Shell";
-import type { EcomConfig, ProductCost, Bundle, MonthlySubscription } from "@/lib/types";
+import { cachedFetch, invalidate } from "@/lib/data-cache";
+import type { EcomConfig, ProductCost, Bundle, MonthlySubscription, AdCampaign } from "@/lib/types";
 
 interface ShopifyMarket {
   id: string;
@@ -51,22 +52,41 @@ function Parametres() {
   const [saved, setSaved] = useState(false);
 
   useEffect(() => {
+    let mounted = true;
+    const apply = (
+      d: { data: { config: EcomConfig } } | null,
+      s: { shop?: ShopInfo; markets?: ShopifyMarket[] } | null,
+      p: { products?: ShopifyProduct[] } | null
+    ) => {
+      if (!mounted) return;
+      if (d?.data?.config) setConfig(d.data.config);
+      if (s?.shop) setShopInfo(s.shop);
+      if (s?.markets) setMarkets(s.markets);
+      if (p?.products) setProducts(p.products);
+    };
+
     Promise.all([
-      fetch("/api/data").then(r => r.json()),
-      fetch("/api/shop").then(r => r.json()),
-      fetch("/api/products").then(r => r.ok ? r.json() : { products: [] }),
-    ]).then(([d, s, p]) => {
-      setConfig(d.data.config);
-      if (s.shop) setShopInfo(s.shop);
-      if (s.markets) setMarkets(s.markets);
-      if (p.products) setProducts(p.products);
-    });
+      cachedFetch<{ data: { config: EcomConfig } }>("/api/data", {
+        onUpdate: (d) => apply(d, null, null),
+      }),
+      cachedFetch<{ shop?: ShopInfo; markets?: ShopifyMarket[] }>("/api/shop", {
+        onUpdate: (d) => apply(null, d, null),
+      }).catch(() => null),
+      cachedFetch<{ products?: ShopifyProduct[] }>("/api/products", {
+        onUpdate: (d) => apply(null, null, d),
+      }).catch(() => ({ products: [] })),
+    ]).then(([d, s, p]) => apply(d, s, p));
+
+    return () => {
+      mounted = false;
+    };
   }, []);
 
   useEffect(() => {
     if (!dirty || !config) return;
     const t = setTimeout(async () => {
       await fetch("/api/data", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ config }) });
+      invalidate("/api/data");
       setDirty(false); setSaved(true);
       setTimeout(() => setSaved(false), 1500);
     }, 300);
@@ -181,6 +201,11 @@ function Parametres() {
           config={config}
           products={products}
           onChange={(bundles) => set({ bundles })}
+        />
+
+        <CampaignsSection
+          config={config}
+          onChange={(adCampaigns) => set({ adCampaigns })}
         />
 
         <ShippingCostsSection
@@ -538,6 +563,91 @@ function ProductCostsSection({
 }
 
 function uid() { return Math.random().toString(36).slice(2, 10); }
+
+function CampaignsSection({
+  config,
+  onChange,
+}: {
+  config: EcomConfig;
+  onChange: (campaigns: AdCampaign[]) => void;
+}) {
+  const campaigns = config.adCampaigns || [];
+
+  const add = () => {
+    onChange([...campaigns, { id: uid(), name: "Nouvelle campagne", color: undefined, active: true }]);
+  };
+  const update = (id: string, patch: Partial<AdCampaign>) => {
+    onChange(campaigns.map((c) => (c.id === id ? { ...c, ...patch } : c)));
+  };
+  const remove = (id: string) => {
+    if (!confirm("Supprimer cette campagne ? Les spends déjà saisis sous cette campagne resteront mais ne seront plus filtrables.")) return;
+    onChange(campaigns.filter((c) => c.id !== id));
+  };
+
+  return (
+    <div className="card" style={{ gridColumn: "1 / -1" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "start", gap: "1rem", marginBottom: "0.5rem" }}>
+        <div>
+          <div style={{ fontSize: "1.05rem", fontWeight: 600 }}>📢 Campagnes publicitaires</div>
+          <div style={{ fontSize: "0.75rem", color: "var(--text-dim)", marginTop: "0.25rem", lineHeight: 1.5 }}>
+            Définis ici les campagnes Meta/Google de cette boutique. Une fois créées, tu pourras saisir le spend par campagne sur la page <b>Profit Journalier</b> via le filtre &quot;Campagne&quot;.
+          </div>
+        </div>
+        <button className="btn btn-primary" onClick={add}>+ Ajouter</button>
+      </div>
+
+      {campaigns.length === 0 ? (
+        <div style={{ padding: "0.75rem", color: "var(--text-faint)", fontSize: "0.85rem", fontStyle: "italic" }}>
+          Aucune campagne. Sans campagne, tu peux toujours saisir un spend global par jour.
+        </div>
+      ) : (
+        <table className="table" style={{ fontSize: "0.85rem" }}>
+          <thead>
+            <tr>
+              <th style={{ textAlign: "left" }}>Nom</th>
+              <th style={{ textAlign: "center", width: 90 }}>Couleur</th>
+              <th style={{ textAlign: "center", width: 80 }}>Active</th>
+              <th style={{ width: 60 }}></th>
+            </tr>
+          </thead>
+          <tbody>
+            {campaigns.map((c) => (
+              <tr key={c.id}>
+                <td>
+                  <input
+                    className="input"
+                    value={c.name}
+                    onChange={(e) => update(c.id, { name: e.target.value })}
+                    placeholder="ex: Prospecting US"
+                    style={{ width: "100%" }}
+                  />
+                </td>
+                <td style={{ textAlign: "center" }}>
+                  <input
+                    type="color"
+                    value={c.color || "#888888"}
+                    onChange={(e) => update(c.id, { color: e.target.value })}
+                    style={{ width: 40, height: 28, border: "1px solid var(--border)", borderRadius: 4, padding: 0, background: "transparent" }}
+                  />
+                </td>
+                <td style={{ textAlign: "center" }}>
+                  <input
+                    type="checkbox"
+                    checked={c.active}
+                    onChange={(e) => update(c.id, { active: e.target.checked })}
+                  />
+                </td>
+                <td style={{ textAlign: "center" }}>
+                  <button className="btn" onClick={() => remove(c.id)} title="Supprimer">✕</button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
+}
 
 function BundlesSection({
   config,

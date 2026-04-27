@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { cachedFetch, clearCache } from "@/lib/data-cache";
 
 interface ShopRow {
   shop: string;
@@ -18,8 +19,7 @@ export default function ShopSwitcher({ currentShopName }: { currentShopName?: st
 
   useEffect(() => {
     if (!open || shops) return;
-    fetch("/api/shops")
-      .then((r) => r.json())
+    cachedFetch<{ shops?: ShopRow[] }>("/api/shops")
       .then((d) => setShops(d.shops || []))
       .catch(() => setShops([]));
   }, [open, shops]);
@@ -40,6 +40,8 @@ export default function ShopSwitcher({ currentShopName }: { currentShopName?: st
       body: JSON.stringify({ shop }),
     });
     if (res.ok) {
+      // Cached data belongs to the previous shop — clear so the next page reloads fresh.
+      clearCache();
       window.location.href = "/";
       return;
     }

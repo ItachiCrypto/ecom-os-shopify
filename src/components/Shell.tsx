@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
+import { cachedFetch } from "@/lib/data-cache";
 import { DateRangeProvider } from "./DateRangeContext";
 import DateRangePicker from "./DateRangePicker";
 import ShopSwitcher from "./ShopSwitcher";
@@ -27,17 +28,19 @@ export default function Shell({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     let cancelled = false;
-    fetch("/api/shop")
-      .then(async (r) => {
+    cachedFetch<{ shop?: ShopInfo }>("/api/shop", {
+      onUpdate: (d) => {
         if (cancelled) return;
-        if (r.status === 401) {
-          setConnected(false);
-          return;
+        if (d.shop) {
+          setShop(d.shop);
+          setConnected(true);
         }
-        const data = await r.json();
+      },
+    })
+      .then((d) => {
         if (cancelled) return;
-        if (data.shop) {
-          setShop(data.shop);
+        if (d.shop) {
+          setShop(d.shop);
           setConnected(true);
         } else {
           setConnected(false);

@@ -2,9 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { getProducts } from "@/lib/shopify";
 import { listActiveShops } from "@/lib/storage";
 import { SHOP_COOKIE, ALL_SHOPS } from "@/lib/config";
+import { jsonSWR } from "@/lib/http";
 
-// Cache products for 5min (they don't change often)
-let cached: { data: unknown; expires: number; shop: string } | null = null;
+// Per-shop cache (Map, not a single global slot — concurrent requests on
+// different shops were stomping each other's entries before).
+const productCache = new Map<string, { data: unknown; expires: number }>();
 const TTL = 5 * 60 * 1000;
 
 export async function GET(request: NextRequest) {
@@ -13,8 +15,9 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
   }
 
-  if (cached && cached.shop === shop && cached.expires > Date.now()) {
-    return NextResponse.json({ products: cached.data, cached: true });
+  const hit = productCache.get(shop);
+  if (hit && hit.expires > Date.now()) {
+    return jsonSWR({ products: hit.data, cached: true }, { maxAge: 60, swr: 600 });
   }
 
   // ALL mode — merge products from every installed shop (each tagged with _shop)
@@ -32,8 +35,8 @@ export async function GET(request: NextRequest) {
         })
       );
       const merged = perShop.flat();
-      cached = { data: merged, expires: Date.now() + TTL, shop };
-      return NextResponse.json({ products: merged, mode: "all" });
+      productCache.set(shop, { data: merged, expires: Date.now() + TTL });
+      return jsonSWR({ products: merged, mode: "all" }, { maxAge: 60, swr: 600 });
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Unknown error";
       return NextResponse.json({ error: msg }, { status: 500 });
@@ -42,8 +45,8 @@ export async function GET(request: NextRequest) {
 
   try {
     const products = await getProducts(shop, 250);
-    cached = { data: products, expires: Date.now() + TTL, shop };
-    return NextResponse.json({ products });
+    productCache.set(shop, { data: products, expires: Date.now() + TTL });
+    return jsonSWR({ products }, { maxAge: 60, swr: 600 });
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Unknown error";
     return NextResponse.json({ error: msg }, { status: 500 });

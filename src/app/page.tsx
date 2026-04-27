@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import Shell from "@/components/Shell";
+import { cachedFetch } from "@/lib/data-cache";
 import { fmtMoney, getRealFees, hasRealFeeData } from "@/lib/order-utils";
 import type { Transaction } from "@/lib/order-utils";
 import { useDateRangeCtx } from "@/components/DateRangeContext";
@@ -113,30 +114,33 @@ function Dashboard() {
   }, [allOrders, range, timeZone]);
 
   useEffect(() => {
-    const load = async () => {
+    let mounted = true;
+    (async () => {
       try {
-        const [oRes, dRes, sRes] = await Promise.all([
-          fetch("/api/orders?all=true"),
-          fetch("/api/data"),
-          fetch("/api/shop"),
+        const [oJson, dJson, sJson] = await Promise.all([
+          cachedFetch<{ orders: Order[] }>("/api/orders?all=true", {
+            onUpdate: (d) => mounted && setAllOrders(d.orders),
+          }),
+          cachedFetch<{ data: ShopData }>("/api/data", {
+            onUpdate: (d) => mounted && setData(d.data),
+          }),
+          cachedFetch<{ shop?: { currencyCode?: string } }>("/api/shop", {
+            onUpdate: (d) => mounted && d.shop?.currencyCode && setCurrency(d.shop.currencyCode),
+          }).catch(() => null),
         ]);
-        if (!oRes.ok) throw new Error((await oRes.json()).error || "orders failed");
-        if (!dRes.ok) throw new Error((await dRes.json()).error || "data failed");
-        const oJson = await oRes.json();
-        const dJson = await dRes.json();
+        if (!mounted) return;
         setAllOrders(oJson.orders);
         setData(dJson.data);
-        if (sRes.ok) {
-          const sJson = await sRes.json();
-          if (sJson.shop?.currencyCode) setCurrency(sJson.shop.currencyCode);
-        }
+        if (sJson?.shop?.currencyCode) setCurrency(sJson.shop.currencyCode);
       } catch (e) {
-        setError(e instanceof Error ? e.message : "Load error");
+        if (mounted) setError(e instanceof Error ? e.message : "Load error");
       } finally {
-        setLoading(false);
+        if (mounted) setLoading(false);
       }
+    })();
+    return () => {
+      mounted = false;
     };
-    load();
   }, []);
 
   const stats = useMemo(() => {

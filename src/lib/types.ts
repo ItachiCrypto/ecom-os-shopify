@@ -79,6 +79,27 @@ export interface MonthlySubscription {
   active: boolean;
 }
 
+/**
+ * A Meta/Google ad campaign tracked separately within a shop's daily spend.
+ * Spend can be entered per (date, campaign) and the daily total is summed.
+ */
+export interface AdCampaign {
+  id: string;
+  name: string;
+  color?: string; // optional UI tag (CSS color)
+  active: boolean;
+}
+
+/**
+ * One day's ad spend for a shop. Either a single flat amount (legacy) OR a
+ * per-campaign breakdown. When `byCampaign` is present, `spend` is the sum.
+ */
+export interface DailyAdEntry {
+  spend: number;
+  notes?: string;
+  byCampaign?: Record<string, { spend: number; notes?: string }>;
+}
+
 export interface EcomConfig {
   shopifyPct: number;
   shopifyFixe: number;
@@ -105,8 +126,12 @@ export interface EcomConfig {
   productCosts?: Record<string, ProductCost>;
   // Bundles (e.g. "ring + free lube") — extra items that ship with each trigger variant sold
   bundles?: Bundle[];
-  // Daily ad spend (key: YYYY-MM-DD, value: spend amount in shop currency)
-  dailyAds?: Record<string, { spend: number; notes?: string }>;
+  // Daily ad spend (key: YYYY-MM-DD). Each entry holds a flat `spend` and an
+  // optional per-campaign breakdown — if `byCampaign` is set, `spend` MUST equal
+  // the sum of campaign values.
+  dailyAds?: Record<string, DailyAdEntry>;
+  // Ad campaigns defined for this shop (Meta/Google/etc).
+  adCampaigns?: AdCampaign[];
   // Shipping cost brackets: key = max quantity for this bracket, value = shipping cost.
   // E.g. { "1": 3.5, "3": 5, "5": 7, "10": 10 }
   // An order with N total items uses the SMALLEST bracket where N <= bracket.

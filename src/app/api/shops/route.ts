@@ -1,7 +1,8 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
 import { listActiveShops, getShopData } from "@/lib/storage";
 import { getShopInfo } from "@/lib/shopify";
 import { SHOP_COOKIE, ALL_SHOPS } from "@/lib/config";
+import { jsonSWR } from "@/lib/http";
 
 export async function GET(request: NextRequest) {
   const activeShop = request.cookies.get(SHOP_COOKIE)?.value;
@@ -39,5 +40,5 @@ export async function GET(request: NextRequest) {
         ]
       : enriched;
 
-  return NextResponse.json({ shops: withAll, activeShop });
+  return jsonSWR({ shops: withAll, activeShop }, { maxAge: 60, swr: 600 });
 }

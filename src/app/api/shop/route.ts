@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getShopInfo, getMarkets } from "@/lib/shopify";
 import { listActiveShops } from "@/lib/storage";
 import { SHOP_COOKIE, ALL_SHOPS, MASTER_SHOP } from "@/lib/config";
+import { jsonSWR } from "@/lib/http";
 
 export async function GET(request: NextRequest) {
   const shop = request.cookies.get(SHOP_COOKIE)?.value;
@@ -29,7 +30,7 @@ export async function GET(request: NextRequest) {
         plan: master?.plan || { displayName: "Aggregated" },
         billingAddress: master?.billingAddress || null,
       };
-      return NextResponse.json({ shop: info, markets: [], mode: "all", shops: valid });
+      return jsonSWR({ shop: info, markets: [], mode: "all", shops: valid }, { maxAge: 60, swr: 600 });
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Unknown error";
       return NextResponse.json({ error: msg }, { status: 500 });
@@ -37,7 +38,7 @@ export async function GET(request: NextRequest) {
   }
   try {
     const [info, markets] = await Promise.all([getShopInfo(shop), getMarkets(shop)]);
-    return NextResponse.json({ shop: info, markets });
+    return jsonSWR({ shop: info, markets }, { maxAge: 60, swr: 600 });
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Unknown error";
     return NextResponse.json({ error: msg }, { status: 500 });

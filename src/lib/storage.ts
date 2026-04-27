@@ -12,9 +12,16 @@ function getBlobToken(): string | undefined {
   return blobEnvNames.map((k) => process.env[k]).find((v) => v && v.startsWith("vercel_blob_"));
 }
 
-// Cache to avoid re-reading blob on every request (TTL 30s)
+// Cache to avoid re-reading blob on every request.
+// Bumped from 30s → 5min: blob reads are the dominant cost on cold-start
+// requests and changes are still pushed through saveShopData/invalidateShopCache.
 const cache = new Map<string, { data: ShopData; expires: number }>();
-const CACHE_TTL = 30_000;
+const CACHE_TTL = 5 * 60_000;
+
+export function invalidateShopCache(shop?: string): void {
+  if (shop) cache.delete(shop);
+  else cache.clear();
+}
 
 function filename(shop: string): string {
   // shop ex: "everpept-new.myshopify.com" -> "shops/everpept-new.json"

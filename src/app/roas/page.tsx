@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Shell from "@/components/Shell";
+import { cachedFetch, invalidate } from "@/lib/data-cache";
 import { formatCurrency, formatPct } from "@/lib/format";
 
 interface Scenario {
@@ -51,17 +52,31 @@ function ROAS() {
   const [dirty, setDirty] = useState(false);
 
   useEffect(() => {
-    fetch("/api/data").then(r => r.json()).then(j => {
+    let mounted = true;
+    cachedFetch<{ data: { config: EcomConfig; scenarios?: Scenario[] } }>("/api/data", {
+      onUpdate: (j) => {
+        if (!mounted) return;
+        setConfig(j.data.config);
+        setScenarios(j.data.scenarios || []);
+      },
+    }).then((j) => {
+      if (!mounted) return;
       setConfig(j.data.config);
       setScenarios(j.data.scenarios || []);
     });
+    return () => {
+      mounted = false;
+    };
   }, []);
 
   useEffect(() => {
     if (!dirty || !config) return;
     const timer = setTimeout(() => {
       fetch("/api/data", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ config, scenarios }) })
-        .then(() => setDirty(false));
+        .then(() => {
+          invalidate("/api/data");
+          setDirty(false);
+        });
     }, 300);
     return () => clearTimeout(timer);
   }, [scenarios, config, dirty]);

@@ -6,6 +6,8 @@ import {
   mirrorConfigToAllShops,
 } from "@/lib/storage";
 import { SHOP_COOKIE, ALL_SHOPS, MASTER_SHOP, SHARED_CONFIG_FIELDS } from "@/lib/config";
+import { convertAmount, getShopCurrency } from "@/lib/currency";
+import { jsonSWR } from "@/lib/http";
 import type { EcomConfig, ShopData } from "@/lib/types";
 
 export async function GET(request: NextRequest) {
@@ -28,26 +30,49 @@ export async function GET(request: NextRequest) {
       (data): data is ShopData => Boolean(data)
     );
 
+    // Currency normalization: convert each shop's amounts to the master's currency
+    // before summing, so EUR + USD entries stop being added as if they were the same unit.
+    const masterCurrency = await getShopCurrency(MASTER_SHOP);
+    const shopCurrencies = new Map<string, string>();
+    await Promise.all(
+      shopDatas.map(async (d) => shopCurrencies.set(d.shop, await getShopCurrency(d.shop)))
+    );
+
     // Merge shop-specific calculation inputs so the ALL view equals the sum of shop views.
-    const mergedDailyAds: Record<string, { spend: number; notes?: string }> = {};
+    const mergedDailyAds: NonNullable<EcomConfig["dailyAds"]> = {};
     const mergedProductCosts: NonNullable<EcomConfig["productCosts"]> = {};
     const mergedBundles: NonNullable<EcomConfig["bundles"]> = [];
     const mergedMonthlySubscriptions: NonNullable<EcomConfig["monthlySubscriptions"]> = [];
-    const mergedSoldeInitial = shopDatas.reduce(
-      (sum, data) => sum + (data.config.soldeInitial || 0),
-      0
-    );
+    const mergedAdCampaigns: NonNullable<EcomConfig["adCampaigns"]> = [];
+    const mergedSoldeInitial = shopDatas.reduce((sum, data) => {
+      const cur = shopCurrencies.get(data.shop) || masterCurrency;
+      return sum + convertAmount(data.config.soldeInitial || 0, cur, masterCurrency);
+    }, 0);
 
     for (const data of shopDatas) {
+      const shopCurrency = shopCurrencies.get(data.shop) || masterCurrency;
       const entries = data.config.dailyAds || {};
       for (const [date, entry] of Object.entries(entries)) {
-        mergedDailyAds[date] = {
-          spend: (mergedDailyAds[date]?.spend || 0) + (entry.spend || 0),
-          notes:
-            mergedDailyAds[date]?.notes && entry.notes
-              ? `${mergedDailyAds[date]?.notes} | ${entry.notes}`
-              : mergedDailyAds[date]?.notes || entry.notes,
-        };
+        const spendInMaster = convertAmount(entry.spend || 0, shopCurrency, masterCurrency);
+        const existing = mergedDailyAds[date] ?? { spend: 0 };
+        existing.spend = (existing.spend || 0) + spendInMaster;
+        existing.notes =
+          existing.notes && entry.notes
+            ? `${existing.notes} | ${entry.notes}`
+            : existing.notes || entry.notes;
+        // Per-campaign rollup — prefix each campaign id with its shop so two
+        // shops can have campaigns named the same without colliding.
+        if (entry.byCampaign) {
+          existing.byCampaign = existing.byCampaign || {};
+          for (const [cid, c] of Object.entries(entry.byCampaign)) {
+            const key = `${data.shop}:${cid}`;
+            existing.byCampaign[key] = {
+              spend: convertAmount(c.spend || 0, shopCurrency, masterCurrency),
+              ...(c.notes ? { notes: c.notes } : {}),
+            };
+          }
+        }
+        mergedDailyAds[date] = existing;
       }
 
       Object.assign(mergedProductCosts, data.config.productCosts || {});
@@ -61,6 +86,18 @@ export async function GET(request: NextRequest) {
         ...(data.config.monthlySubscriptions || []).map((subscription) => ({
           ...subscription,
           id: `${data.shop}:${subscription.id}`,
+          monthlyAmount: convertAmount(
+            Number(subscription.monthlyAmount) || 0,
+            shopCurrency,
+            masterCurrency
+          ),
+        }))
+      );
+      mergedAdCampaigns.push(
+        ...(data.config.adCampaigns || []).map((c) => ({
+          ...c,
+          id: `${data.shop}:${c.id}`,
+          name: `${c.name} · ${data.shop.replace(".myshopify.com", "")}`,
         }))
       );
     }
@@ -74,11 +111,12 @@ export async function GET(request: NextRequest) {
         productCosts: mergedProductCosts,
         bundles: mergedBundles,
         monthlySubscriptions: mergedMonthlySubscriptions,
+        adCampaigns: mergedAdCampaigns,
       },
     };
     const { accessToken: _t, ...safe } = aggregated;
     void _t;
-    return NextResponse.json({ data: safe, mode: "all" });
+    return jsonSWR({ data: safe, mode: "all" }, { maxAge: 30, swr: 300 });
   }
 
   const data = await getShopData(shop);
@@ -89,7 +127,7 @@ export async function GET(request: NextRequest) {
   // Never return the access token to the client
   const { accessToken: _t, ...safe } = data;
   void _t;
-  return NextResponse.json({ data: safe });
+  return jsonSWR({ data: safe }, { maxAge: 30, swr: 300 });
 }
 
 export async function POST(request: NextRequest) {
@@ -113,14 +151,19 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
 
-  // In ALL mode, the dailyAds coming from the client are the MERGED values (sum of all shops).
-  // Saving them back to master would cause double-counting on next merge. Preserve master's own
-  // dailyAds untouched in this case. The user can only edit dailyAds per-shop.
+  // In ALL mode, several config fields returned by the client are AGGREGATES across all shops
+  // (dailyAds = sum, productCosts/bundles/monthlySubscriptions = union with prefixed ids).
+  // Writing them back to the master would corrupt master's own data and double-count on the next
+  // merge. Preserve master's per-shop fields untouched here — they must be edited per-shop.
   let nextConfig = body.config ?? existing.config;
   if (shop === ALL_SHOPS && body.config) {
     nextConfig = {
       ...body.config,
       dailyAds: existing.config.dailyAds,
+      productCosts: existing.config.productCosts,
+      bundles: existing.config.bundles,
+      monthlySubscriptions: existing.config.monthlySubscriptions,
+      adCampaigns: existing.config.adCampaigns,
     };
   }
 

@@ -2,10 +2,11 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Shell from "@/components/Shell";
+import { cachedFetch, invalidate } from "@/lib/data-cache";
 import { fmtMoney } from "@/lib/order-utils";
 import { useDateRangeCtx } from "@/components/DateRangeContext";
 import { addDaysIso, formatIsoDate, inRange, isoInTimeZone } from "@/hooks/useDateRange";
-import type { ProductCost, Bundle, MonthlySubscription } from "@/lib/types";
+import type { ProductCost, Bundle, MonthlySubscription, AdCampaign, DailyAdEntry } from "@/lib/types";
 
 interface Money { shopMoney: { amount: string; currencyCode: string } }
 interface Variant {
@@ -44,7 +45,8 @@ interface ShopData {
     monthlySubscriptions?: MonthlySubscription[];
     productCosts?: Record<string, ProductCost>;
     bundles?: Bundle[];
-    dailyAds?: Record<string, { spend: number; notes?: string }>;
+    dailyAds?: Record<string, DailyAdEntry>;
+    adCampaigns?: AdCampaign[];
     shippingCostByQty?: Record<string, number>;
   };
 }
@@ -54,8 +56,13 @@ interface ShopOption {
   name: string;
 }
 
-type DailyAds = Record<string, { spend: number; notes?: string }>;
+type DailyAds = Record<string, DailyAdEntry>;
 type DailyAdsByShop = Record<string, DailyAds>;
+type CampaignsByShop = Record<string, AdCampaign[]>;
+
+// Sentinel filter values
+const CAMPAIGN_ALL = "__all_campaigns__";
+const CAMPAIGN_FLAT = "__flat__"; // legacy entries (no breakdown)
 
 export default function ProfitPage() { return <Shell><Profit /></Shell>; }
 
@@ -68,56 +75,136 @@ function Profit() {
   const [shops, setShops] = useState<ShopOption[]>([]);
   const [editableShop, setEditableShop] = useState("");
   const [dailyAdsByShop, setDailyAdsByShop] = useState<DailyAdsByShop>({});
-  const [pendingAdSaves, setPendingAdSaves] = useState<Record<string, { shop?: string; date: string; spend: number; notes?: string }>>({});
+  const [campaignsByShop, setCampaignsByShop] = useState<CampaignsByShop>({});
+  const [campaignFilter, setCampaignFilter] = useState<string>(CAMPAIGN_ALL);
+  const [pendingAdSaves, setPendingAdSaves] = useState<
+    Record<string, { shop?: string; date: string; spend: number; notes?: string; campaignId?: string }>
+  >({});
   const { range, timeZone } = useDateRangeCtx();
 
   useEffect(() => {
-    Promise.all([
-      fetch("/api/orders?all=true").then(r => r.json()),
-      fetch("/api/data").then(r => r.json()),
-      fetch("/api/shop").then(r => r.ok ? r.json() : null),
-      fetch("/api/ad-spend").then(r => r.ok ? r.json() : null),
-    ]).then(([o, d, s, ads]) => {
-      setOrders(o.orders);
-      setData(d.data);
+    let mounted = true;
+    const apply = (
+      o: { orders: Order[] } | null,
+      d: { data: ShopData } | null,
+      s: { shop?: { currencyCode?: string; myshopifyDomain?: string }; mode?: string } | null,
+      ads:
+        | {
+            shops?: ShopOption[];
+            dailyAdsByShop?: DailyAdsByShop;
+            editableShop?: string;
+            campaignsByShop?: CampaignsByShop;
+          }
+        | null
+    ) => {
+      if (!mounted) return;
+      if (o?.orders) setOrders(o.orders);
+      if (d?.data) setData(d.data);
       if (s?.shop?.currencyCode) setCurrency(s.shop.currencyCode);
       if (s?.mode === "all" || s?.shop?.myshopifyDomain === "__all__") setIsAllMode(true);
       if (ads?.shops) setShops(ads.shops);
       if (ads?.dailyAdsByShop) setDailyAdsByShop(ads.dailyAdsByShop);
       if (ads?.editableShop) setEditableShop(ads.editableShop);
-    });
+      if (ads?.campaignsByShop) setCampaignsByShop(ads.campaignsByShop);
+    };
+
+    Promise.all([
+      cachedFetch<{ orders: Order[] }>("/api/orders?all=true", {
+        onUpdate: (d) => apply(d, null, null, null),
+      }),
+      cachedFetch<{ data: ShopData }>("/api/data", {
+        onUpdate: (d) => apply(null, d, null, null),
+      }),
+      cachedFetch<{ shop?: { currencyCode?: string; myshopifyDomain?: string }; mode?: string }>(
+        "/api/shop",
+        { onUpdate: (d) => apply(null, null, d, null) }
+      ).catch(() => null),
+      cachedFetch<{
+        shops?: ShopOption[];
+        dailyAdsByShop?: DailyAdsByShop;
+        editableShop?: string;
+        campaignsByShop?: CampaignsByShop;
+      }>("/api/ad-spend", { onUpdate: (d) => apply(null, null, null, d) }).catch(() => null),
+    ]).then(([o, d, s, ads]) => apply(o, d, s, ads));
+
+    return () => {
+      mounted = false;
+    };
   }, []);
 
-  const mergeDailyAds = (byShop: DailyAdsByShop): DailyAds => {
+  // Sum the per-shop daily entries down to a single date map. If `campaignId`
+  // is provided, only that campaign's spend per date contributes — the legacy
+  // flat (non-breakdown) entries contribute only when the filter is "All" or
+  // the special FLAT bucket.
+  const mergeDailyAds = (
+    byShop: DailyAdsByShop,
+    campaignId: string = CAMPAIGN_ALL
+  ): DailyAds => {
     const merged: DailyAds = {};
     for (const entries of Object.values(byShop)) {
       for (const [date, entry] of Object.entries(entries || {})) {
-        merged[date] = {
-          spend: (merged[date]?.spend || 0) + (entry.spend || 0),
-          notes:
-            merged[date]?.notes && entry.notes
-              ? `${merged[date].notes} | ${entry.notes}`
-              : merged[date]?.notes || entry.notes,
-        };
+        let spend = 0;
+        let notes: string | undefined;
+        if (campaignId === CAMPAIGN_ALL) {
+          spend = entry.spend || 0;
+          notes = entry.notes;
+        } else if (campaignId === CAMPAIGN_FLAT) {
+          // Only the residual flat amount that isn't already attributed to a campaign
+          const breakdownSum = entry.byCampaign
+            ? Object.values(entry.byCampaign).reduce((s, c) => s + (c.spend || 0), 0)
+            : 0;
+          spend = Math.max(0, (entry.spend || 0) - breakdownSum);
+          notes = entry.notes;
+        } else {
+          const c = entry.byCampaign?.[campaignId];
+          spend = c?.spend || 0;
+          notes = c?.notes;
+        }
+        if (spend === 0 && !notes) continue;
+        const cur = merged[date] ?? { spend: 0 };
+        cur.spend = (cur.spend || 0) + spend;
+        cur.notes =
+          cur.notes && notes ? `${cur.notes} | ${notes}` : cur.notes || notes;
+        merged[date] = cur;
       }
     }
     return merged;
   };
 
-  // Debounced save on daily ad spend edits
+  // Active campaign list for the currently editable shop (falls back to all
+  // campaigns across all shops in non-all mode).
+  const activeCampaigns: AdCampaign[] = useMemo(() => {
+    if (isAllMode) {
+      const list: AdCampaign[] = [];
+      for (const [shop, cs] of Object.entries(campaignsByShop)) {
+        for (const c of cs || []) {
+          if (!c.active) continue;
+          list.push({
+            ...c,
+            id: `${shop}:${c.id}`,
+            name: `${c.name} · ${shop.replace(".myshopify.com", "")}`,
+          });
+        }
+      }
+      return list;
+    }
+    const cs = (data?.config.adCampaigns || []).filter((c) => c.active);
+    return cs;
+  }, [isAllMode, campaignsByShop, data]);
+
+  // Debounced save on daily ad spend edits — sent as a single batch so the server
+  // can read+write each shop's blob exactly once (avoids the lost-write race).
   useEffect(() => {
     const saves = Object.values(pendingAdSaves);
     if (!dirty || saves.length === 0) return;
     const t = setTimeout(async () => {
-      await Promise.all(
-        saves.map((save) =>
-          fetch("/api/ad-spend", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(save),
-          })
-        )
-      );
+      await fetch("/api/ad-spend", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ entries: saves }),
+      });
+      // Drop server caches so the next render reflects the new spend.
+      invalidate("/api/data", "/api/ad-spend");
       setDirty(false);
       setPendingAdSaves({});
     }, 300);
@@ -311,37 +398,118 @@ function Profit() {
 
   if (!orders || !data) return <div>Chargement...</div>;
 
+  // Apply a single edit to a date entry, scoped to a campaign id (or flat).
+  // Returns the updated entry; null means "delete this date".
+  const applyEntryEdit = (
+    current: DailyAdEntry | undefined,
+    spend: number,
+    notes: string | undefined,
+    scope: string
+  ): DailyAdEntry | null => {
+    const next: DailyAdEntry = current
+      ? { ...current, byCampaign: current.byCampaign ? { ...current.byCampaign } : undefined }
+      : { spend: 0 };
+
+    if (scope === CAMPAIGN_FLAT || scope === CAMPAIGN_ALL) {
+      // Flat edit — overwrite top-level spend, drop any breakdown.
+      delete next.byCampaign;
+      if (spend === 0 && !notes) return null;
+      next.spend = spend;
+      next.notes = notes;
+      return next;
+    }
+
+    // Per-campaign edit
+    const byCampaign = next.byCampaign ?? {};
+    if (spend === 0) {
+      delete byCampaign[scope];
+    } else {
+      byCampaign[scope] = { spend, ...(notes ? { notes } : {}) };
+    }
+    if (Object.keys(byCampaign).length === 0) {
+      delete next.byCampaign;
+    } else {
+      next.byCampaign = byCampaign;
+    }
+    next.spend = next.byCampaign
+      ? Object.values(next.byCampaign).reduce((s, c) => s + (c.spend || 0), 0)
+      : next.spend;
+    if (!next.byCampaign && !next.notes && next.spend === 0) return null;
+    return next;
+  };
+
   const updateAdSpend = (date: string, spend: number, notes?: string) => {
     if (!data) return;
-    const targetShop = editableShop || shops[0]?.shop;
-    const cleanNotes = notes?.trim();
+    const cleanNotes = notes?.trim() || undefined;
+    // The shop whose blob actually receives the write. In ALL mode, the
+    // campaign filter id is `${shop}:${campaignId}` so we can recover the shop.
+    let targetShop = editableShop || shops[0]?.shop;
+    let scope: string = campaignFilter;
+    if (isAllMode && campaignFilter !== CAMPAIGN_ALL && campaignFilter !== CAMPAIGN_FLAT) {
+      const sep = campaignFilter.indexOf(":");
+      if (sep > 0) {
+        targetShop = campaignFilter.slice(0, sep);
+        scope = campaignFilter.slice(sep + 1);
+      }
+    }
 
     if (isAllMode && targetShop) {
       const currentForShop = dailyAdsByShop[targetShop] || {};
+      const updated = applyEntryEdit(currentForShop[date], spend, cleanNotes, scope);
       const nextForShop = { ...currentForShop };
-      if (spend === 0) {
-        delete nextForShop[date];
-      } else {
-        nextForShop[date] = { spend, ...(cleanNotes ? { notes: cleanNotes } : {}) };
-      }
+      if (updated === null) delete nextForShop[date];
+      else nextForShop[date] = updated;
+
       const nextByShop = { ...dailyAdsByShop, [targetShop]: nextForShop };
       setDailyAdsByShop(nextByShop);
-      setData({ ...data, config: { ...data.config, dailyAds: mergeDailyAds(nextByShop) } });
-      setPendingAdSaves((prev) => ({ ...prev, [`${targetShop}:${date}`]: { shop: targetShop, date, spend, notes: cleanNotes } }));
+      // The aggregate `data.config.dailyAds` keeps the global "All campaigns"
+      // sum so the totals row stays consistent regardless of the filter.
+      setData({ ...data, config: { ...data.config, dailyAds: mergeDailyAds(nextByShop, CAMPAIGN_ALL) } });
+      setPendingAdSaves((prev) => ({
+        ...prev,
+        [`${targetShop}:${date}:${scope}`]: {
+          shop: targetShop,
+          date,
+          spend,
+          notes: cleanNotes,
+          ...(scope !== CAMPAIGN_ALL && scope !== CAMPAIGN_FLAT ? { campaignId: scope } : {}),
+        },
+      }));
       setDirty(true);
       return;
     }
 
+    // Single-shop mode
     const current = data.config.dailyAds || {};
+    const updated = applyEntryEdit(current[date], spend, cleanNotes, scope);
     const next = { ...current };
-    if (spend === 0) {
-      delete next[date];
-    } else {
-      next[date] = { spend, ...(cleanNotes ? { notes: cleanNotes } : {}) };
-    }
+    if (updated === null) delete next[date];
+    else next[date] = updated;
     setData({ ...data, config: { ...data.config, dailyAds: next } });
-    setPendingAdSaves((prev) => ({ ...prev, [date]: { date, spend, notes: cleanNotes } }));
+    setPendingAdSaves((prev) => ({
+      ...prev,
+      [`${date}:${scope}`]: {
+        date,
+        spend,
+        notes: cleanNotes,
+        ...(scope !== CAMPAIGN_ALL && scope !== CAMPAIGN_FLAT ? { campaignId: scope } : {}),
+      },
+    }));
     setDirty(true);
+  };
+
+  /** Force-flush any pending ad-spend edits immediately ("Push tout"). */
+  const pushAllPending = async () => {
+    const saves = Object.values(pendingAdSaves);
+    if (saves.length === 0) return;
+    await fetch("/api/ad-spend", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ entries: saves }),
+    });
+    invalidate("/api/data", "/api/ad-spend");
+    setDirty(false);
+    setPendingAdSaves({});
   };
 
   const cellColor = (value: number, threshold1: number, threshold2: number): string => {
@@ -372,13 +540,43 @@ function Profit() {
 
   return (
     <div>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem", gap: "1rem", flexWrap: "wrap" }}>
         <div>
           <h1 style={{ fontSize: "1.75rem", fontWeight: 600, margin: 0 }}>Profit Journalier</h1>
           <div style={{ color: "var(--text-dim)", fontSize: "0.875rem", marginTop: "0.25rem" }}>
             Période <span className="accent">{range.label}</span> · {days.length} jours · {total?.orders || 0} commandes · Heure boutique {timeZone}
             {dirty && <span style={{ marginLeft: "0.75rem", color: "var(--blue)" }}>Sauvegarde...</span>}
           </div>
+        </div>
+        <div style={{ display: "flex", alignItems: "flex-end", gap: "0.5rem" }}>
+          <label style={{ fontSize: "0.7rem", color: "var(--text-dim)", textTransform: "uppercase", letterSpacing: "0.05em", display: "flex", flexDirection: "column", gap: "0.25rem" }}>
+            Campagne
+            <select
+              className="select"
+              value={campaignFilter}
+              onChange={(e) => setCampaignFilter(e.target.value)}
+              style={{ minWidth: 220 }}
+            >
+              <option value={CAMPAIGN_ALL}>Toutes les campagnes</option>
+              {activeCampaigns.length > 0 && <option value={CAMPAIGN_FLAT}>Sans campagne (saisie globale)</option>}
+              {activeCampaigns.map((c) => (
+                <option key={c.id} value={c.id}>{c.name}</option>
+              ))}
+            </select>
+          </label>
+          <button
+            className="btn btn-primary"
+            onClick={pushAllPending}
+            disabled={Object.keys(pendingAdSaves).length === 0}
+            title="Envoie immédiatement toutes les modifications en attente"
+          >
+            Push tout
+            {Object.keys(pendingAdSaves).length > 0 && (
+              <span style={{ marginLeft: "0.4rem", fontSize: "0.75rem", opacity: 0.85 }}>
+                ({Object.keys(pendingAdSaves).length})
+              </span>
+            )}
+          </button>
         </div>
       </div>
 
@@ -505,9 +703,43 @@ function Profit() {
             </thead>
             <tbody>
               {days.map((d) => {
-                const selectedShopEntry = isAllMode ? dailyAdsByShop[editableShop]?.[d.date] : undefined;
-                const editableSpend = isAllMode ? selectedShopEntry?.spend : d.adsRaw;
-                const editableNotes = isAllMode ? selectedShopEntry?.notes : d.notes;
+                // Resolve which entry the input cell edits, given the active
+                // campaign filter and (in ALL mode) the editable shop.
+                let scopeShop = isAllMode ? editableShop : "";
+                let scope: string = campaignFilter;
+                if (
+                  isAllMode &&
+                  campaignFilter !== CAMPAIGN_ALL &&
+                  campaignFilter !== CAMPAIGN_FLAT
+                ) {
+                  const sep = campaignFilter.indexOf(":");
+                  if (sep > 0) {
+                    scopeShop = campaignFilter.slice(0, sep);
+                    scope = campaignFilter.slice(sep + 1);
+                  }
+                }
+                const fullEntry = isAllMode
+                  ? dailyAdsByShop[scopeShop]?.[d.date]
+                  : data?.config.dailyAds?.[d.date];
+
+                let editableSpend: number | undefined;
+                let editableNotes: string | undefined;
+                if (scope === CAMPAIGN_ALL) {
+                  editableSpend = fullEntry?.spend;
+                  editableNotes = fullEntry?.notes;
+                } else if (scope === CAMPAIGN_FLAT) {
+                  const breakdownSum = fullEntry?.byCampaign
+                    ? Object.values(fullEntry.byCampaign).reduce((s, c) => s + (c.spend || 0), 0)
+                    : 0;
+                  editableSpend = (fullEntry?.spend || 0) - breakdownSum;
+                  if (editableSpend < 0) editableSpend = 0;
+                  editableNotes = fullEntry?.notes;
+                } else {
+                  const c = fullEntry?.byCampaign?.[scope];
+                  editableSpend = c?.spend;
+                  editableNotes = c?.notes;
+                }
+                const editingPerCampaign = scope !== CAMPAIGN_ALL && scope !== CAMPAIGN_FLAT;
                 return (
                 <tr key={d.date} style={{ background: rowBgForProfit(d.profitNet) }}>
                   <td style={{ position: "sticky", left: 0, background: "var(--bg-card)", fontWeight: 500 }}>
@@ -524,8 +756,17 @@ function Profit() {
                         onChange={(e) => updateAdSpend(d.date, parseFloat(e.target.value) || 0, editableNotes)}
                         placeholder="0 (HT)"
                         style={{ maxWidth: 100, textAlign: "right", fontSize: "0.8rem" }}
-                        title="Saisis le montant HT - le TTC est calcule automatiquement"
+                        title={
+                          editingPerCampaign
+                            ? "Spend HT pour la campagne sélectionnée"
+                            : "Saisis le montant HT - le TTC est calculé automatiquement"
+                        }
                       />
+                      {editingPerCampaign && (fullEntry?.spend || 0) > (editableSpend || 0) && (
+                        <div className="mono" style={{ fontSize: "0.65rem", marginTop: "0.15rem", color: "var(--text-dim)" }}>
+                          Autres campagnes: {fmtMoney((fullEntry?.spend || 0) - (editableSpend || 0), currency)}
+                        </div>
+                      )}
                       {isAllMode && d.adsRaw > 0 && (
                         <div className="mono" style={{ fontSize: "0.65rem", marginTop: "0.15rem", color: "var(--text-dim)" }}>
                           Total boutiques: {fmtMoney(d.adsRaw, currency)}
