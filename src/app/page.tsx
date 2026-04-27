@@ -204,12 +204,15 @@ function Dashboard() {
       let orderQty = 0;
       for (const { node: li } of o.lineItems.edges) {
         orderQty += li.quantity;
-        const sku = li.variant?.sku;
-        if (!sku) continue;
-        const pc = productCosts[sku];
+        // Try SKU first (shared), fall back to variantId (per-shop)
+        const sku = li.variant?.sku || "";
+        const variantId = li.variant?.id || "";
+        const key = sku || variantId;
+        if (!key) continue;
+        const pc = productCosts[key];
         if (!pc || !pc.active) continue;
         totalCogs += li.quantity * pc.cogs;
-        const bundleExtra = bundleExtraCogsPerTriggerSku[sku] || 0;
+        const bundleExtra = sku ? (bundleExtraCogsPerTriggerSku[sku] || 0) : 0;
         const isMoonBundleLine = (li.customAttributes || []).some((a) => a.key === "__moonbundle");
         if (bundleExtra > 0 && !isMoonBundleLine) {
           totalCogs += li.quantity * bundleExtra;

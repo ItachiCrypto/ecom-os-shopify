@@ -441,18 +441,20 @@ function Profit() {
       for (const { node: li } of o.lineItems.edges) {
         orderTotalQty += li.quantity;
 
-        const sku = li.variant?.sku;
-        if (!sku) continue;
-        const pc = productCosts[sku];
-        // Only count if SKU is tracked AND active
+        // Try SKU first (shared across shops), fall back to variantId
+        // (per-shop, for variants without SKU).
+        const sku = li.variant?.sku || "";
+        const variantId = li.variant?.id || "";
+        const key = sku || variantId;
+        if (!key) continue;
+        const pc = productCosts[key];
         if (!pc || !pc.active) continue;
 
-        day.qtyByVariant[sku] = (day.qtyByVariant[sku] || 0) + li.quantity;
-        // COGS = what the product costs us (even if customer got it free)
+        day.qtyByVariant[key] = (day.qtyByVariant[key] || 0) + li.quantity;
         day.cogs += li.quantity * pc.cogs;
 
-        // Add bundle extras from manual config (ignored if Moon Bundles already handles it)
-        const bundleExtra = bundleExtraCogsPerTriggerSku[sku] || 0;
+        // Bundles are SKU-keyed only — no fallback for variants without SKU.
+        const bundleExtra = sku ? (bundleExtraCogsPerTriggerSku[sku] || 0) : 0;
         const isMoonBundleLine = (li.customAttributes || []).some((a) => a.key === "__moonbundle");
         if (bundleExtra > 0 && !isMoonBundleLine) {
           day.cogs += li.quantity * bundleExtra;

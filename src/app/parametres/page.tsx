@@ -469,34 +469,54 @@ function ProductCostsSection({
   const [showInactive, setShowInactive] = useState(false);
   const costs = config.productCosts || {};
 
-  const updateBySku = (sku: string, patch: Partial<ProductCost>) => {
-    const next = { ...costs, [sku]: { ...costs[sku], sku, ...patch } as ProductCost };
+  const updateByKey = (key: string, sku: string, patch: Partial<ProductCost>) => {
+    const next = { ...costs, [key]: { ...costs[key], sku, ...patch } as ProductCost };
     onChange(next);
   };
 
-  // Flatten variants across every product (and every shop, when products
-  // come from /api/products?all=true), then deduplicate by SKU so the user
-  // edits each unique product cost once and it applies to every shop.
-  const flattened = products.flatMap((p) =>
-    p.variants.edges.map((e) => ({
-      sku: e.node.sku || "",
-      variantTitle: e.node.title,
-      price: parseFloat(e.node.price),
-      productTitle: p.title,
-      productStatus: p.status,
-    }))
-  );
-  // Group by SKU. Variants with no SKU are excluded — they can't be shared
-  // across shops. Surfacing them with a warning is a separate UX concern.
-  const seen = new Set<string>();
-  const dedupedBySku = flattened.filter((v) => {
-    if (!v.sku) return false;
-    if (seen.has(v.sku)) return false;
-    seen.add(v.sku);
-    return true;
-  });
+  // Flatten every variant from every shop. Each row gets a stable key:
+  // - If a SKU is set, the key IS the SKU → shared across shops, edit once.
+  // - If no SKU, fall back to a per-shop variantId key so the row is still
+  //   visible / editable, just not auto-shared with other shops.
+  type Row = {
+    key: string;            // map key into productCosts
+    sku: string;            // SKU if set, otherwise empty
+    variantId: string;      // Shopify variant id, used for fallback key
+    shop?: string;          // shop tag when products come from ?all=true
+    variantTitle: string;
+    price: number;
+    productTitle: string;
+    productStatus: string;
+    isShared: boolean;      // SKU present → shared
+  };
+  const rows: Row[] = [];
+  const seenKey = new Set<string>();
+  for (const p of products as (ShopifyProduct & { _shop?: string })[]) {
+    for (const e of p.variants.edges) {
+      const sku = e.node.sku || "";
+      const variantId = e.node.id;
+      const shop = (p as { _shop?: string })._shop;
+      // Variant IDs are globally unique Shopify GIDs, so plain variantId is
+      // a safe fallback key when SKU is missing — works in both single-shop
+      // and ALL-shop modes.
+      const key = sku || variantId;
+      if (seenKey.has(key)) continue;
+      seenKey.add(key);
+      rows.push({
+        key,
+        sku,
+        variantId,
+        shop,
+        variantTitle: e.node.title,
+        price: parseFloat(e.node.price),
+        productTitle: p.title,
+        productStatus: p.status,
+        isShared: !!sku,
+      });
+    }
+  }
 
-  const filtered = dedupedBySku.filter((v) => {
+  const filtered = rows.filter((v) => {
     if (!showInactive && v.productStatus !== "ACTIVE") return false;
     if (search) {
       const s = search.toLowerCase();
@@ -504,17 +524,17 @@ function ProductCostsSection({
     }
     return true;
   });
-  const variantsWithoutSku = flattened.filter((v) => !v.sku).length;
+  const variantsWithoutSku = rows.filter((v) => !v.sku).length;
 
   return (
     <div className="card" style={{ gridColumn: "1 / -1" }}>
       <div style={{ marginBottom: "0.5rem" }}>
         <div style={{ fontSize: "1.05rem", fontWeight: 600 }}>💰 Coûts produits (COGS)</div>
         <div style={{ fontSize: "0.8rem", color: "var(--text-dim)", marginTop: "0.25rem", lineHeight: 1.5 }}>
-          Saisis le coût de chaque SKU. <b>Une seule saisie par SKU</b> — le COGS s&apos;applique automatiquement à toutes les boutiques qui vendent ce SKU.
+          Saisis le coût de chaque variante. Les lignes avec SKU sont <b>partagées entre toutes les boutiques</b> (une seule saisie pour tous). Les variantes sans SKU restent par boutique.
           {variantsWithoutSku > 0 && (
-            <span style={{ color: "var(--orange)", display: "block", marginTop: "0.25rem" }}>
-              ⚠ {variantsWithoutSku} variantes Shopify n&apos;ont pas de SKU — elles ne sont pas listées et ne pourront pas avoir de COGS partagé tant qu&apos;elles n&apos;en ont pas.
+            <span style={{ color: "var(--orange)", display: "block", marginTop: "0.25rem", fontSize: "0.75rem" }}>
+              ⚠ {variantsWithoutSku} variante(s) sans SKU — le COGS ne sera pas synchronisé sur les autres boutiques tant qu&apos;elles n&apos;en ont pas un.
             </span>
           )}
         </div>
@@ -534,7 +554,7 @@ function ProductCostsSection({
         </label>
       </div>
 
-      {flattened.length === 0 ? (
+      {rows.length === 0 ? (
         <div style={{ padding: "1rem", textAlign: "center", color: "var(--text-faint)", fontSize: "0.85rem" }}>
           Chargement des produits Shopify...
         </div>
@@ -551,25 +571,34 @@ function ProductCostsSection({
             </thead>
             <tbody>
               {filtered.map((v) => {
-                const existing = costs[v.sku];
+                const existing = costs[v.key];
                 const cogsValue = existing?.cogs ?? 0;
                 const active = existing?.active ?? true;
                 return (
-                  <tr key={v.sku}>
+                  <tr key={v.key} style={{ opacity: v.isShared ? 1 : 0.85 }}>
                     <td>
-                      <div style={{ fontWeight: 500, fontSize: "0.85rem" }}>{v.productTitle}</div>
+                      <div style={{ display: "flex", alignItems: "center", gap: "0.4rem" }}>
+                        <div style={{ fontWeight: 500, fontSize: "0.85rem" }}>{v.productTitle}</div>
+                        {!v.isShared && v.shop && (
+                          <span style={{ fontSize: "0.65rem", color: "var(--text-faint)", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                            {v.shop.replace(".myshopify.com", "")}
+                          </span>
+                        )}
+                      </div>
                       {v.variantTitle !== "Default Title" && (
                         <div style={{ fontSize: "0.75rem", color: "var(--text-dim)" }}>{v.variantTitle}</div>
                       )}
                     </td>
-                    <td style={{ fontSize: "0.75rem", color: "var(--text-dim)" }} className="mono">{v.sku}</td>
+                    <td style={{ fontSize: "0.75rem", color: v.isShared ? "var(--text-dim)" : "var(--orange)" }} className="mono">
+                      {v.sku || "—"}
+                    </td>
                     <td style={{ textAlign: "right" }}>
                       <input
                         className="input mono"
                         type="number"
                         step="0.01"
                         value={cogsValue}
-                        onChange={(e) => updateBySku(v.sku, {
+                        onChange={(e) => updateByKey(v.key, v.sku, {
                           productTitle: v.productTitle,
                           variantTitle: v.variantTitle,
                           price: v.price,
@@ -583,7 +612,7 @@ function ProductCostsSection({
                       <input
                         type="checkbox"
                         checked={active}
-                        onChange={(e) => updateBySku(v.sku, {
+                        onChange={(e) => updateByKey(v.key, v.sku, {
                           productTitle: v.productTitle,
                           variantTitle: v.variantTitle,
                           price: v.price,
