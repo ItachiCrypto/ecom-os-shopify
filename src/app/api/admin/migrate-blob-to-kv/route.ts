@@ -79,13 +79,17 @@ export async function GET(request: NextRequest) {
   }
   const redis = new Redis({ url: redisUrl, token: redisToken });
 
-  // 1. List blob entries — capture each blob's public URL so we can fetch
-  // it directly (the @vercel/blob `get()` helper is currently 403'ing on
-  // the suspended store, but the public URLs from list() still resolve).
-  let blobs: { pathname: string; url: string }[];
+  // 1. List blob entries
+  let blobs: { pathname: string; url: string; downloadUrl?: string }[];
+  let rawList: unknown;
   try {
     const result = await list({ prefix: "shops/", token: blobToken });
-    blobs = result.blobs.map((b) => ({ pathname: b.pathname, url: b.url }));
+    rawList = result;
+    blobs = result.blobs.map((b) => ({
+      pathname: b.pathname,
+      url: b.url,
+      downloadUrl: (b as { downloadUrl?: string }).downloadUrl,
+    }));
   } catch (e) {
     return NextResponse.json(
       {
@@ -98,6 +102,11 @@ export async function GET(request: NextRequest) {
 
   if (blobs.length === 0) {
     return NextResponse.json({ ok: true, migrated: [], skipped: [], errors: [], note: "No shop blobs found" });
+  }
+
+  // Debug mode — dump everything list() returned without trying to fetch
+  if (url.searchParams.get("debug") === "true") {
+    return NextResponse.json({ ok: true, debug: true, rawList, blobs });
   }
 
   const migrated: { shop: string; bytes: number }[] = [];
@@ -125,13 +134,36 @@ export async function GET(request: NextRequest) {
         }
       }
 
-      // Read blob via its public URL (avoids the suspended store's get() ACL).
-      const res = await fetch(b.url, { cache: "no-store" });
-      if (!res.ok) {
-        errors.push({ shop, error: `Public URL fetch failed: ${res.status}` });
+      // Try every URL variant Vercel returned, plus a token-authenticated
+      // fetch, until one succeeds. The suspended store rejects most paths
+      // with 403 but this maximizes our chances of recovering data.
+      const candidates: { label: string; url: string; init?: RequestInit }[] = [];
+      if (b.downloadUrl) candidates.push({ label: "downloadUrl", url: b.downloadUrl });
+      candidates.push({ label: "url", url: b.url });
+      candidates.push({
+        label: "url+token",
+        url: b.url,
+        init: { headers: { Authorization: `Bearer ${blobToken}` } },
+      });
+
+      let text: string | null = null;
+      let lastErr = "";
+      for (const c of candidates) {
+        try {
+          const res = await fetch(c.url, { cache: "no-store", ...(c.init || {}) });
+          if (res.ok) {
+            text = await res.text();
+            break;
+          }
+          lastErr = `${c.label}: ${res.status}`;
+        } catch (e) {
+          lastErr = `${c.label}: ${e instanceof Error ? e.message : "unknown"}`;
+        }
+      }
+      if (text === null) {
+        errors.push({ shop, error: `All fetch variants failed (${lastErr})` });
         continue;
       }
-      const text = await res.text();
       const data = JSON.parse(text) as ShopData;
 
       // Write to Redis: data + index membership
