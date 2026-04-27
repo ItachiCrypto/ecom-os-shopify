@@ -179,13 +179,15 @@ export async function POST(request: NextRequest) {
   }
 
   // In ALL mode, several config fields returned by the client are AGGREGATES across all shops
-  // (dailyAds = sum, productCosts/bundles/monthlySubscriptions = union with prefixed ids).
-  // Writing them back to the master would corrupt master's own data and double-count on the next
-  // merge. Preserve master's per-shop fields untouched here — they must be edited per-shop.
+  // (dailyAds = sum, soldeInitial = sum, monthlySubscriptions/bundles/productCosts/adCampaigns =
+  // union with prefixed ids). Writing them back to the master would corrupt master's own data
+  // and double-count on the next merge. Preserve master's per-shop fields untouched here —
+  // they must be edited per-shop.
   let nextConfig = body.config ?? existing.config;
   if (shop === ALL_SHOPS && body.config) {
     nextConfig = {
       ...body.config,
+      soldeInitial: existing.config.soldeInitial,
       dailyAds: existing.config.dailyAds,
       productCosts: existing.config.productCosts,
       bundles: existing.config.bundles,
@@ -210,11 +212,13 @@ export async function POST(request: NextRequest) {
 
   await saveShopData(merged);
 
-  // Mirror shared config fields to all other installed shops (keeps settings in sync)
+  // Mirror shared config fields to all other installed shops. Use the
+  // server-side cleaned `nextConfig` (not the raw body) so ALL-mode
+  // aggregates (sums, prefixed ids) never leak across shops.
   let mirrored: string[] = [];
   if (body.config) {
     const shared: Record<string, unknown> = {};
-    const cfg = body.config as unknown as Record<string, unknown>;
+    const cfg = nextConfig as unknown as Record<string, unknown>;
     for (const key of SHARED_CONFIG_FIELDS) {
       const value = cfg[key];
       if (value !== undefined) shared[key] = value;

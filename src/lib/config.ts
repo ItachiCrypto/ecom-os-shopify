@@ -88,14 +88,15 @@ export const ALL_SHOPS = "__all__";
 // settings come from the master. Each shop keeps its own accessToken, dailyAds and productCosts.
 export const MASTER_SHOP = process.env.MASTER_SHOP || "56aqy8-pd.myshopify.com";
 
-// Fields that are shared/mirrored across all shops on save
+// Fields that are shared/mirrored across all shops on save.
+// Per-shop fields (NOT mirrored): soldeInitial (each shop has its own
+// treasury balance), dailyAds, productCosts, adCampaigns, accessToken.
 export const SHARED_CONFIG_FIELDS = [
   "shopifyPct",
   "shopifyFixe",
   "urssaf",
   "ir",
   "tva",
-  "soldeInitial",
   "objectifCA",
   "objectifProfit",
   "alerteRunway",
