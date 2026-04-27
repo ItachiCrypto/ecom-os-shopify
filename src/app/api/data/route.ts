@@ -19,12 +19,26 @@ export async function GET(request: NextRequest) {
   // ALL mode — aggregate: config from master shop, dailyAds merged from all shops
   if (shop === ALL_SHOPS) {
     const all = await listActiveShops();
-    const master = await getShopData(MASTER_SHOP);
-    if (!master) {
+    if (all.length === 0) {
       return NextResponse.json(
-        { error: `Master shop ${MASTER_SHOP} not installed` },
+        { error: "No shops installed yet" },
         { status: 404 }
       );
+    }
+    // Resolve the master shop. If MASTER_SHOP isn't installed (uninstalled,
+    // env var mismatch, etc.), fall back to the first installed shop so the
+    // ALL view keeps working instead of returning 404.
+    let masterShop = MASTER_SHOP;
+    let master = await getShopData(MASTER_SHOP);
+    if (!master) {
+      masterShop = all[0];
+      master = await getShopData(masterShop);
+      if (!master) {
+        return NextResponse.json(
+          { error: "No installed shop has data yet" },
+          { status: 404 }
+        );
+      }
     }
     const shopDatas = (await Promise.all(all.map((s) => getShopData(s)))).filter(
       (data): data is ShopData => Boolean(data)
@@ -32,7 +46,7 @@ export async function GET(request: NextRequest) {
 
     // Currency normalization: convert each shop's amounts to the master's currency
     // before summing, so EUR + USD entries stop being added as if they were the same unit.
-    const masterCurrency = await getShopCurrency(MASTER_SHOP);
+    const masterCurrency = await getShopCurrency(masterShop);
     const shopCurrencies = new Map<string, string>();
     await Promise.all(
       shopDatas.map(async (d) => shopCurrencies.set(d.shop, await getShopCurrency(d.shop)))
@@ -136,8 +150,21 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
   }
 
-  // In ALL mode, writes target the master shop + mirror shared fields to all
-  const targetShop = shop === ALL_SHOPS ? MASTER_SHOP : shop;
+  // In ALL mode, writes target the master shop + mirror shared fields to all.
+  // If the configured MASTER_SHOP isn't installed, fall back to the first
+  // installed shop so the request doesn't 404.
+  let targetShop = shop;
+  if (shop === ALL_SHOPS) {
+    targetShop = MASTER_SHOP;
+    const masterCheck = await getShopData(MASTER_SHOP);
+    if (!masterCheck) {
+      const all = await listActiveShops();
+      if (all.length === 0) {
+        return NextResponse.json({ error: "No shops installed yet" }, { status: 404 });
+      }
+      targetShop = all[0];
+    }
+  }
 
   const existing = await getShopData(targetShop);
   if (!existing) {
