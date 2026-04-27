@@ -262,8 +262,36 @@ function Profit() {
       .filter(([, pc]) => pc.active)
       .map(([variantId, pc]) => ({ variantId, ...pc }));
 
-    // Filter orders in range
-    const filteredOrders = orders.filter((o) => inRange(o.createdAt, range, timeZone));
+    // Filter orders by date range AND (when applicable) by the selected
+    // campaign's targeted countries — so a US-only campaign's row shows
+    // only US sales / COGS / ROAS.
+    const campaignCountries: Set<string> | null = (() => {
+      if (campaignFilter === CAMPAIGN_ALL || campaignFilter === CAMPAIGN_FLAT) return null;
+      const c = activeCampaigns.find((x) => x.id === campaignFilter);
+      if (!c?.countries || c.countries.length === 0) return null;
+      return new Set(c.countries.map((x) => x.toUpperCase()));
+    })();
+    const filteredOrders = orders.filter((o) => {
+      if (!inRange(o.createdAt, range, timeZone)) return false;
+      if (!campaignCountries) return true;
+      const code = o.shippingAddress?.countryCodeV2?.toUpperCase();
+      return code ? campaignCountries.has(code) : false;
+    });
+
+    // Resolve the spend that matches the active campaign filter for a given
+    // date entry. CAMPAIGN_ALL = global sum, CAMPAIGN_FLAT = residual not
+    // attributed to a campaign, otherwise = that campaign's slot.
+    const spendForScope = (entry: typeof dailyAds[string] | undefined): number => {
+      if (!entry) return 0;
+      if (campaignFilter === CAMPAIGN_ALL) return entry.spend || 0;
+      if (campaignFilter === CAMPAIGN_FLAT) {
+        const breakdownSum = entry.byCampaign
+          ? Object.values(entry.byCampaign).reduce((s, c) => s + (c.spend || 0), 0)
+          : 0;
+        return Math.max(0, (entry.spend || 0) - breakdownSum);
+      }
+      return entry.byCampaign?.[campaignFilter]?.spend || 0;
+    };
 
     // Build day buckets
     const dayMap = new Map<string, {
@@ -323,7 +351,7 @@ function Profit() {
     const days = Array.from(dayMap.values())
       .sort((a, b) => a.date.localeCompare(b.date))
       .map((d) => {
-        const adsRaw = dailyAds[d.date]?.spend || 0;
+        const adsRaw = spendForScope(dailyAds[d.date]);
         const adsWithTax = adsRaw * (1 + taxPct / 100); // Ads TTC (what it really costs you)
         const profitBrut = d.sales - adsWithTax - d.cogs;
         const profitBrutPct = d.sales > 0 ? (profitBrut / d.sales) * 100 : 0;
@@ -394,7 +422,7 @@ function Profit() {
       total: { ...total, profitBrutPct: totalProfitBrutPct, profitNetPct: totalProfitNetPct, roas: totalRoas },
       activeVariants,
     };
-  }, [orders, data, range, timeZone]);
+  }, [orders, data, range, timeZone, campaignFilter, activeCampaigns]);
 
   if (!orders || !data) return <div>Chargement...</div>;
 
@@ -545,6 +573,16 @@ function Profit() {
           <h1 style={{ fontSize: "1.75rem", fontWeight: 600, margin: 0 }}>Profit Journalier</h1>
           <div style={{ color: "var(--text-dim)", fontSize: "0.875rem", marginTop: "0.25rem" }}>
             Période <span className="accent">{range.label}</span> · {days.length} jours · {total?.orders || 0} commandes · Heure boutique {timeZone}
+            {(() => {
+              if (campaignFilter === CAMPAIGN_ALL || campaignFilter === CAMPAIGN_FLAT) return null;
+              const c = activeCampaigns.find((x) => x.id === campaignFilter);
+              if (!c?.countries || c.countries.length === 0) return null;
+              return (
+                <span style={{ marginLeft: "0.6rem", color: "var(--accent)" }}>
+                  · Filtré: {c.countries.join(", ")}
+                </span>
+              );
+            })()}
             {dirty && <span style={{ marginLeft: "0.75rem", color: "var(--blue)" }}>Sauvegarde...</span>}
           </div>
         </div>

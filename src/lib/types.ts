@@ -88,6 +88,11 @@ export interface AdCampaign {
   name: string;
   color?: string; // optional UI tag (CSS color)
   active: boolean;
+  // ISO 3166-1 alpha-2 country codes targeted by this campaign (e.g. ["US"]
+  // for a US campaign, ["MX","ES"] for Hispanic). When a campaign has
+  // countries, filtering by it on the Profit page also restricts the orders
+  // (sales/COGS/ROAS) to those geographies. Empty/missing = no geo filter.
+  countries?: string[];
 }
 
 /**

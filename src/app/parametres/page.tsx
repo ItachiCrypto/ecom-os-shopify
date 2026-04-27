@@ -205,6 +205,7 @@ function Parametres() {
 
         <CampaignsSection
           config={config}
+          countries={countries}
           onChange={(adCampaigns) => set({ adCampaigns })}
         />
 
@@ -566,15 +567,20 @@ function uid() { return Math.random().toString(36).slice(2, 10); }
 
 function CampaignsSection({
   config,
+  countries,
   onChange,
 }: {
   config: EcomConfig;
+  countries: { id: string; name: string; code: string; currency: { currencyCode: string } }[];
   onChange: (campaigns: AdCampaign[]) => void;
 }) {
   const campaigns = config.adCampaigns || [];
 
   const add = () => {
-    onChange([...campaigns, { id: uid(), name: "Nouvelle campagne", color: undefined, active: true }]);
+    onChange([
+      ...campaigns,
+      { id: uid(), name: "Nouvelle campagne", color: undefined, active: true, countries: [] },
+    ]);
   };
   const update = (id: string, patch: Partial<AdCampaign>) => {
     onChange(campaigns.map((c) => (c.id === id ? { ...c, ...patch } : c)));
@@ -584,13 +590,22 @@ function CampaignsSection({
     onChange(campaigns.filter((c) => c.id !== id));
   };
 
+  const toggleCountry = (id: string, code: string) => {
+    const c = campaigns.find((x) => x.id === id);
+    if (!c) return;
+    const cur = new Set(c.countries || []);
+    if (cur.has(code)) cur.delete(code);
+    else cur.add(code);
+    update(id, { countries: Array.from(cur) });
+  };
+
   return (
     <div className="card" style={{ gridColumn: "1 / -1" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "start", gap: "1rem", marginBottom: "0.5rem" }}>
         <div>
           <div style={{ fontSize: "1.05rem", fontWeight: 600 }}>📢 Campagnes publicitaires</div>
           <div style={{ fontSize: "0.75rem", color: "var(--text-dim)", marginTop: "0.25rem", lineHeight: 1.5 }}>
-            Définis ici les campagnes Meta/Google de cette boutique. Une fois créées, tu pourras saisir le spend par campagne sur la page <b>Profit Journalier</b> via le filtre &quot;Campagne&quot;.
+            Définis tes campagnes Meta/Google et les pays qu&apos;elles ciblent. Sur <b>Profit Journalier</b>, choisir une campagne filtrera à la fois son spend ET les ventes des pays ciblés — ROAS réel par géo. Sans pays = pas de filtre géo.
           </div>
         </div>
         <button className="btn btn-primary" onClick={add}>+ Ajouter</button>
@@ -601,49 +616,85 @@ function CampaignsSection({
           Aucune campagne. Sans campagne, tu peux toujours saisir un spend global par jour.
         </div>
       ) : (
-        <table className="table" style={{ fontSize: "0.85rem" }}>
-          <thead>
-            <tr>
-              <th style={{ textAlign: "left" }}>Nom</th>
-              <th style={{ textAlign: "center", width: 90 }}>Couleur</th>
-              <th style={{ textAlign: "center", width: 80 }}>Active</th>
-              <th style={{ width: 60 }}></th>
-            </tr>
-          </thead>
-          <tbody>
-            {campaigns.map((c) => (
-              <tr key={c.id}>
-                <td>
+        <div style={{ display: "flex", flexDirection: "column", gap: "0.6rem" }}>
+          {campaigns.map((c) => {
+            const selected = new Set(c.countries || []);
+            return (
+              <div
+                key={c.id}
+                style={{
+                  border: "1px solid var(--border)",
+                  borderRadius: 6,
+                  padding: "0.6rem 0.75rem",
+                  background: c.active ? "transparent" : "rgba(0,0,0,0.04)",
+                  opacity: c.active ? 1 : 0.7,
+                }}
+              >
+                <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", flexWrap: "wrap" }}>
+                  <input
+                    type="color"
+                    value={c.color || "#888888"}
+                    onChange={(e) => update(c.id, { color: e.target.value })}
+                    style={{ width: 32, height: 28, border: "1px solid var(--border)", borderRadius: 4, padding: 0, background: "transparent" }}
+                    title="Couleur"
+                  />
                   <input
                     className="input"
                     value={c.name}
                     onChange={(e) => update(c.id, { name: e.target.value })}
                     placeholder="ex: Prospecting US"
-                    style={{ width: "100%" }}
+                    style={{ flex: 1, minWidth: 160 }}
                   />
-                </td>
-                <td style={{ textAlign: "center" }}>
-                  <input
-                    type="color"
-                    value={c.color || "#888888"}
-                    onChange={(e) => update(c.id, { color: e.target.value })}
-                    style={{ width: 40, height: 28, border: "1px solid var(--border)", borderRadius: 4, padding: 0, background: "transparent" }}
-                  />
-                </td>
-                <td style={{ textAlign: "center" }}>
-                  <input
-                    type="checkbox"
-                    checked={c.active}
-                    onChange={(e) => update(c.id, { active: e.target.checked })}
-                  />
-                </td>
-                <td style={{ textAlign: "center" }}>
+                  <label style={{ fontSize: "0.75rem", color: "var(--text-dim)", display: "flex", alignItems: "center", gap: "0.3rem" }}>
+                    <input
+                      type="checkbox"
+                      checked={c.active}
+                      onChange={(e) => update(c.id, { active: e.target.checked })}
+                    />
+                    Active
+                  </label>
                   <button className="btn" onClick={() => remove(c.id)} title="Supprimer">✕</button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+                </div>
+                <div style={{ marginTop: "0.5rem" }}>
+                  <div style={{ fontSize: "0.7rem", color: "var(--text-dim)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: "0.3rem" }}>
+                    Pays ciblés ({selected.size})
+                  </div>
+                  {countries.length === 0 ? (
+                    <div style={{ fontSize: "0.75rem", color: "var(--text-faint)", fontStyle: "italic" }}>
+                      Aucun marché Shopify détecté. Ajoute des marchés dans Shopify Markets pour définir une géo.
+                    </div>
+                  ) : (
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: "0.3rem" }}>
+                      {countries.map((co) => {
+                        const on = selected.has(co.code);
+                        return (
+                          <button
+                            key={co.code}
+                            type="button"
+                            onClick={() => toggleCountry(c.id, co.code)}
+                            style={{
+                              padding: "0.2rem 0.55rem",
+                              fontSize: "0.72rem",
+                              borderRadius: 999,
+                              border: on ? "1px solid var(--accent)" : "1px solid var(--border)",
+                              background: on ? "var(--accent)" : "transparent",
+                              color: on ? "#000" : "var(--text-dim)",
+                              cursor: "pointer",
+                              fontWeight: on ? 600 : 400,
+                            }}
+                            title={co.name}
+                          >
+                            {co.code}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
       )}
     </div>
   );
