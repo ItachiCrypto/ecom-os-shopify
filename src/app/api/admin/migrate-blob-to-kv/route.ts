@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { list, get } from "@vercel/blob";
+import { list } from "@vercel/blob";
 import { Redis } from "@upstash/redis";
 import type { ShopData } from "@/lib/types";
 
@@ -79,11 +79,13 @@ export async function GET(request: NextRequest) {
   }
   const redis = new Redis({ url: redisUrl, token: redisToken });
 
-  // 1. List blob entries
-  let blobs: { pathname: string }[];
+  // 1. List blob entries — capture each blob's public URL so we can fetch
+  // it directly (the @vercel/blob `get()` helper is currently 403'ing on
+  // the suspended store, but the public URLs from list() still resolve).
+  let blobs: { pathname: string; url: string }[];
   try {
     const result = await list({ prefix: "shops/", token: blobToken });
-    blobs = result.blobs;
+    blobs = result.blobs.map((b) => ({ pathname: b.pathname, url: b.url }));
   } catch (e) {
     return NextResponse.json(
       {
@@ -123,13 +125,13 @@ export async function GET(request: NextRequest) {
         }
       }
 
-      // Read blob
-      const blob = await get(b.pathname, { access: "public", token: blobToken });
-      if (!blob?.stream) {
-        errors.push({ shop, error: "Blob has no stream (deleted?)" });
+      // Read blob via its public URL (avoids the suspended store's get() ACL).
+      const res = await fetch(b.url, { cache: "no-store" });
+      if (!res.ok) {
+        errors.push({ shop, error: `Public URL fetch failed: ${res.status}` });
         continue;
       }
-      const text = await new Response(blob.stream).text();
+      const text = await res.text();
       const data = JSON.parse(text) as ShopData;
 
       // Write to Redis: data + index membership
