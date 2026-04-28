@@ -162,16 +162,16 @@ function Profit() {
     };
   }, []);
 
-  // Sum the per-shop daily entries down to a single date map. If `campaignId`
-  // is provided, only that campaign's spend per date contributes — the legacy
-  // flat (non-breakdown) entries contribute only when the filter is "All" or
-  // the special FLAT bucket.
+  // Sum the per-shop daily entries down to a single date map. Also preserves
+  // the byCampaign breakdown with shop-prefixed keys (`${shop}:${campaignId}`)
+  // so the merged map matches the format returned by /api/data ALL mode and
+  // the per-market filter keeps working after local edits.
   const mergeDailyAds = (
     byShop: DailyAdsByShop,
     campaignId: string = CAMPAIGN_ALL
   ): DailyAds => {
     const merged: DailyAds = {};
-    for (const entries of Object.values(byShop)) {
+    for (const [shop, entries] of Object.entries(byShop)) {
       for (const [date, entry] of Object.entries(entries || {})) {
         let spend = 0;
         let notes: string | undefined;
@@ -179,7 +179,6 @@ function Profit() {
           spend = entry.spend || 0;
           notes = entry.notes;
         } else if (campaignId === CAMPAIGN_FLAT) {
-          // Only the residual flat amount that isn't already attributed to a campaign
           const breakdownSum = entry.byCampaign
             ? Object.values(entry.byCampaign).reduce((s, c) => s + (c.spend || 0), 0)
             : 0;
@@ -190,11 +189,26 @@ function Profit() {
           spend = c?.spend || 0;
           notes = c?.notes;
         }
-        if (spend === 0 && !notes) continue;
+
+        const hasBreakdownToPropagate =
+          campaignId === CAMPAIGN_ALL && entry.byCampaign && Object.keys(entry.byCampaign).length > 0;
+
+        if (spend === 0 && !notes && !hasBreakdownToPropagate) continue;
+
         const cur = merged[date] ?? { spend: 0 };
         cur.spend = (cur.spend || 0) + spend;
-        cur.notes =
-          cur.notes && notes ? `${cur.notes} | ${notes}` : cur.notes || notes;
+        cur.notes = cur.notes && notes ? `${cur.notes} | ${notes}` : cur.notes || notes;
+
+        if (hasBreakdownToPropagate) {
+          cur.byCampaign = cur.byCampaign || {};
+          for (const [cid, c] of Object.entries(entry.byCampaign!)) {
+            cur.byCampaign[`${shop}:${cid}`] = {
+              spend: c.spend || 0,
+              ...(c.notes ? { notes: c.notes } : {}),
+            };
+          }
+        }
+
         merged[date] = cur;
       }
     }
