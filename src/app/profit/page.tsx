@@ -223,15 +223,50 @@ function Profit() {
     };
   };
 
-  // Markets exposed as filterable scopes (auto-generated from Shopify Markets,
-  // separate from the user-defined manual campaigns).
+  // Mapping of unified market filter id → list of (shop, market handle) pairs.
+  // In ALL mode we deduplicate markets across shops by their primary country
+  // code so "United States in shop A" and "Hispanic-US in shop B" surface as
+  // ONE entry — editing it propagates the same spend to every backing shop.
+  const marketShopMap = useMemo(() => {
+    const map = new Map<string, { shop: string; handle: string }[]>();
+    if (!isAllMode) return map;
+    for (const [shop, ms] of Object.entries(marketsByShop)) {
+      for (const m of ms || []) {
+        if (m.enabled === false) continue;
+        const code = m.regions?.edges?.[0]?.node?.code?.toUpperCase() || (m.handle || m.id);
+        const filterId = `unimkt:${code}`;
+        const handle = m.handle || m.id;
+        const list = map.get(filterId) ?? [];
+        list.push({ shop, handle });
+        map.set(filterId, list);
+      }
+    }
+    return map;
+  }, [isAllMode, marketsByShop]);
+
+  // Markets exposed as filterable scopes (auto-generated from Shopify Markets).
+  // ALL mode: deduplicated by primary country code → one row per market.
+  // Single-shop mode: just that shop's markets.
   const marketCampaigns: AdCampaign[] = useMemo(() => {
     if (isAllMode) {
       const list: AdCampaign[] = [];
-      for (const [shop, ms] of Object.entries(marketsByShop)) {
+      const seen = new Set<string>();
+      for (const ms of Object.values(marketsByShop)) {
         for (const m of ms || []) {
           if (m.enabled === false) continue;
-          list.push(marketAsCampaign(m, shop));
+          const code = m.regions?.edges?.[0]?.node?.code?.toUpperCase() || (m.handle || m.id);
+          const filterId = `unimkt:${code}`;
+          if (seen.has(filterId)) continue;
+          seen.add(filterId);
+          const countries = (m.regions?.edges || [])
+            .map((e) => e.node?.code)
+            .filter((c): c is string => !!c);
+          list.push({
+            id: filterId,
+            name: m.name,
+            active: true,
+            countries,
+          });
         }
       }
       return list;
@@ -242,24 +277,14 @@ function Profit() {
       .map((m) => marketAsCampaign(m, null));
   }, [isAllMode, marketsByShop, shops]);
 
-  // Manual campaigns (user-defined, with UTM matching).
+  // Manual campaigns (user-defined, with UTM matching). Hidden in ALL mode —
+  // the user wants to manage spend purely via Shopify Markets at the
+  // aggregated level. Manual campaigns remain available in single-shop mode
+  // for users who do their own UTM-based attribution.
   const manualCampaigns: AdCampaign[] = useMemo(() => {
-    if (isAllMode) {
-      const list: AdCampaign[] = [];
-      for (const [shop, cs] of Object.entries(campaignsByShop)) {
-        for (const c of cs || []) {
-          if (!c.active) continue;
-          list.push({
-            ...c,
-            id: `${shop}:${c.id}`,
-            name: `${c.name} · ${shop.replace(".myshopify.com", "")}`,
-          });
-        }
-      }
-      return list;
-    }
+    if (isAllMode) return [];
     return (data?.config.adCampaigns || []).filter((c) => c.active);
-  }, [isAllMode, campaignsByShop, data]);
+  }, [isAllMode, data]);
 
   // All filterable scopes — markets first, then manual. Used by the cell
   // editor and the order matcher.
@@ -397,6 +422,10 @@ function Profit() {
     // Resolve the spend that matches the active campaign filter for a given
     // date entry. CAMPAIGN_ALL = global sum, CAMPAIGN_FLAT = residual not
     // attributed to a campaign, otherwise = that campaign's slot.
+    //
+    // Unified market scopes (`unimkt:<code>`) read the FIRST backing shop's
+    // `mkt:<handle>` value — since edits propagate the same number to every
+    // shop, picking one avoids double-counting in the ALL-mode merge.
     const spendForScope = (entry: typeof dailyAds[string] | undefined): number => {
       if (!entry) return 0;
       if (campaignFilter === CAMPAIGN_ALL) return entry.spend || 0;
@@ -405,6 +434,14 @@ function Profit() {
           ? Object.values(entry.byCampaign).reduce((s, c) => s + (c.spend || 0), 0)
           : 0;
         return Math.max(0, (entry.spend || 0) - breakdownSum);
+      }
+      if (campaignFilter.startsWith("unimkt:")) {
+        const backings = marketShopMap.get(campaignFilter) || [];
+        for (const { shop, handle } of backings) {
+          const v = entry.byCampaign?.[`${shop}:mkt:${handle}`]?.spend;
+          if (v !== undefined) return v;
+        }
+        return 0;
       }
       return entry.byCampaign?.[campaignFilter]?.spend || 0;
     };
@@ -540,7 +577,7 @@ function Profit() {
       total: { ...total, profitBrutPct: totalProfitBrutPct, profitNetPct: totalProfitNetPct, roas: totalRoas },
       activeVariants,
     };
-  }, [orders, data, range, timeZone, campaignFilter, activeCampaigns]);
+  }, [orders, data, range, timeZone, campaignFilter, activeCampaigns, marketShopMap]);
 
   if (!orders || !data) return <div>Chargement...</div>;
 
@@ -587,58 +624,78 @@ function Profit() {
   const updateAdSpend = (date: string, spend: number, notes?: string) => {
     if (!data) return;
     const cleanNotes = notes?.trim() || undefined;
-    // The shop whose blob actually receives the write. In ALL mode, the
-    // campaign filter id is `${shop}:${campaignId}` so we can recover the shop.
-    let targetShop = editableShop || shops[0]?.shop;
-    let scope: string = campaignFilter;
-    if (isAllMode && campaignFilter !== CAMPAIGN_ALL && campaignFilter !== CAMPAIGN_FLAT) {
+    // Targets is a list of (shop, scope) writes — usually one entry, but
+    // for unified market scopes (`unimkt:<code>`) we propagate the same
+    // value to every shop that has a market matching this code, so both
+    // shops always carry the same per-market spend.
+    const targets: { shop: string; scope: string }[] = [];
+
+    if (isAllMode && campaignFilter.startsWith("unimkt:")) {
+      const backings = marketShopMap.get(campaignFilter) || [];
+      for (const { shop, handle } of backings) {
+        targets.push({ shop, scope: `mkt:${handle}` });
+      }
+    } else if (isAllMode && campaignFilter !== CAMPAIGN_ALL && campaignFilter !== CAMPAIGN_FLAT) {
       const sep = campaignFilter.indexOf(":");
       if (sep > 0) {
-        targetShop = campaignFilter.slice(0, sep);
-        scope = campaignFilter.slice(sep + 1);
+        targets.push({
+          shop: campaignFilter.slice(0, sep),
+          scope: campaignFilter.slice(sep + 1),
+        });
       }
+    } else if (isAllMode) {
+      const t = editableShop || shops[0]?.shop || "";
+      if (t) targets.push({ shop: t, scope: campaignFilter });
+    } else {
+      // Single-shop mode
+      targets.push({ shop: shops[0]?.shop || "", scope: campaignFilter });
     }
 
-    if (isAllMode && targetShop) {
-      const currentForShop = dailyAdsByShop[targetShop] || {};
-      const updated = applyEntryEdit(currentForShop[date], spend, cleanNotes, scope);
-      const nextForShop = { ...currentForShop };
-      if (updated === null) delete nextForShop[date];
-      else nextForShop[date] = updated;
-
-      const nextByShop = { ...dailyAdsByShop, [targetShop]: nextForShop };
+    if (isAllMode) {
+      const nextByShop = { ...dailyAdsByShop };
+      for (const t of targets) {
+        const currentForShop = nextByShop[t.shop] || {};
+        const updated = applyEntryEdit(currentForShop[date], spend, cleanNotes, t.scope);
+        const next = { ...currentForShop };
+        if (updated === null) delete next[date];
+        else next[date] = updated;
+        nextByShop[t.shop] = next;
+      }
       setDailyAdsByShop(nextByShop);
-      // The aggregate `data.config.dailyAds` keeps the global "All campaigns"
-      // sum so the totals row stays consistent regardless of the filter.
       setData({ ...data, config: { ...data.config, dailyAds: mergeDailyAds(nextByShop, CAMPAIGN_ALL) } });
-      setPendingAdSaves((prev) => ({
-        ...prev,
-        [`${targetShop}:${date}:${scope}`]: {
-          shop: targetShop,
-          date,
-          spend,
-          notes: cleanNotes,
-          ...(scope !== CAMPAIGN_ALL && scope !== CAMPAIGN_FLAT ? { campaignId: scope } : {}),
-        },
-      }));
+      setPendingAdSaves((prev) => {
+        const upd = { ...prev };
+        for (const t of targets) {
+          upd[`${t.shop}:${date}:${t.scope}`] = {
+            shop: t.shop,
+            date,
+            spend,
+            notes: cleanNotes,
+            ...(t.scope !== CAMPAIGN_ALL && t.scope !== CAMPAIGN_FLAT ? { campaignId: t.scope } : {}),
+          };
+        }
+        return upd;
+      });
       setDirty(true);
       return;
     }
 
-    // Single-shop mode
+    // Single-shop mode — single target.
+    const t = targets[0];
+    if (!t) return;
     const current = data.config.dailyAds || {};
-    const updated = applyEntryEdit(current[date], spend, cleanNotes, scope);
+    const updated = applyEntryEdit(current[date], spend, cleanNotes, t.scope);
     const next = { ...current };
     if (updated === null) delete next[date];
     else next[date] = updated;
     setData({ ...data, config: { ...data.config, dailyAds: next } });
     setPendingAdSaves((prev) => ({
       ...prev,
-      [`${date}:${scope}`]: {
+      [`${date}:${t.scope}`]: {
         date,
         spend,
         notes: cleanNotes,
-        ...(scope !== CAMPAIGN_ALL && scope !== CAMPAIGN_FLAT ? { campaignId: scope } : {}),
+        ...(t.scope !== CAMPAIGN_ALL && t.scope !== CAMPAIGN_FLAT ? { campaignId: t.scope } : {}),
       },
     }));
     setDirty(true);
@@ -879,7 +936,17 @@ function Profit() {
                 // campaign filter and (in ALL mode) the editable shop.
                 let scopeShop = isAllMode ? editableShop : "";
                 let scope: string = campaignFilter;
-                if (
+                const isUnifiedMarket = isAllMode && campaignFilter.startsWith("unimkt:");
+                if (isUnifiedMarket) {
+                  // For a unified market, all backing shops carry the same
+                  // value (we sync on save) — read from the first one for
+                  // display purposes.
+                  const backings = marketShopMap.get(campaignFilter) || [];
+                  if (backings.length > 0) {
+                    scopeShop = backings[0].shop;
+                    scope = `mkt:${backings[0].handle}`;
+                  }
+                } else if (
                   isAllMode &&
                   campaignFilter !== CAMPAIGN_ALL &&
                   campaignFilter !== CAMPAIGN_FLAT
