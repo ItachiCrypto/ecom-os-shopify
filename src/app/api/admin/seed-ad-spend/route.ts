@@ -31,11 +31,18 @@ interface ShopSeed {
   shop: string;
   campaigns?: { name: string; color?: string; countries?: string[]; utmCampaigns?: string[]; utmSources?: string[] }[];
   spend?: Record<string, Record<string, number>>;
+  // Direct byCampaign key writes (skip the campaign-creation slugify path).
+  // Use this for market scopes like `mkt:<handle>`.
+  // { "mkt:united-stated": { "2026-04-15": 561.48, ... } }
+  rawSpend?: Record<string, Record<string, number>>;
   // Names of campaigns to delete from this shop's adCampaigns list. Their
   // byCampaign entries should already have been zeroed via `spend`; this
   // just removes the now-empty campaign definition so it stops cluttering
   // the dropdown.
   removeCampaigns?: string[];
+  // Wipe every dailyAds entry in this shop before applying the rest of the
+  // seed. Use to clean up after experiments / failed migrations.
+  wipeDailyAds?: boolean;
 }
 
 function slugify(name: string): string {
@@ -128,11 +135,11 @@ export async function POST(request: NextRequest) {
         created.push(c.name);
       }
 
-      const dailyAds = { ...(data.config.dailyAds || {}) };
+      let dailyAds = { ...(data.config.dailyAds || {}) };
+      if (seed.wipeDailyAds) dailyAds = {};
       let daysWritten = 0;
-      for (const [campaignName, dateMap] of Object.entries(seed.spend || {})) {
-        const cid = nameToId.get(campaignName.toLowerCase());
-        if (!cid) continue;
+
+      const writeKeyedSpend = (cid: string, dateMap: Record<string, number>) => {
         for (const [date, rawSpend] of Object.entries(dateMap)) {
           if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) continue;
           const spend = Number(rawSpend) || 0;
@@ -148,15 +155,11 @@ export async function POST(request: NextRequest) {
           } else {
             byCampaign[cid] = { spend };
           }
-          // Always recompute spend from the breakdown so deleting the last
-          // campaign correctly resets the flat total to 0 — the previous
-          // flow skipped recomputeTotal when byCampaign became empty,
-          // leaving stale flat spend values on shops.
+          // Always recompute the flat total from the breakdown so deleting
+          // the last campaign correctly resets it to 0.
           cur.byCampaign = byCampaign;
           const next = recomputeTotal(cur);
-          if (Object.keys(byCampaign).length === 0) {
-            delete next.byCampaign;
-          }
+          if (Object.keys(byCampaign).length === 0) delete next.byCampaign;
           if (!next.byCampaign && next.spend === 0 && !next.notes) {
             delete dailyAds[date];
           } else {
@@ -164,6 +167,16 @@ export async function POST(request: NextRequest) {
           }
           daysWritten++;
         }
+      };
+
+      for (const [campaignName, dateMap] of Object.entries(seed.spend || {})) {
+        const cid = nameToId.get(campaignName.toLowerCase());
+        if (!cid) continue;
+        writeKeyedSpend(cid, dateMap);
+      }
+      for (const [rawKey, dateMap] of Object.entries(seed.rawSpend || {})) {
+        if (!rawKey) continue;
+        writeKeyedSpend(rawKey, dateMap);
       }
 
       // Remove any campaigns the caller asked us to drop (after spends were
