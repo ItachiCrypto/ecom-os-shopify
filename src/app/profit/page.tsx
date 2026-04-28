@@ -48,6 +48,9 @@ interface Order {
   customerJourneySummary?: { firstVisit?: Visit | null; lastVisit?: Visit | null } | null;
   lineItems: { edges: { node: LineItem }[] };
   customAttributes?: { key: string; value: string }[];
+  // Added by /api/orders ALL mode handler — identifies which shop the
+  // order came from when aggregating across multiple stores.
+  _shop?: string;
 }
 
 interface ShopData {
@@ -352,6 +355,18 @@ function Profit() {
         ? null
         : activeCampaigns.find((x) => x.id === campaignFilter) || null;
 
+    // For market scopes (`${shop}:mkt:<handle>`), pin the order set to the
+    // shop that owns that market — otherwise an Hispanic shop order shipped
+    // to the US would be counted for the main shop's US market and vice
+    // versa, double-counting US sales across the two markets.
+    const ownerShop: string | null =
+      isAllMode && campaignFilter !== CAMPAIGN_ALL && campaignFilter !== CAMPAIGN_FLAT
+        ? (() => {
+            const sep = campaignFilter.indexOf(":");
+            return sep > 0 ? campaignFilter.slice(0, sep) : null;
+          })()
+        : null;
+
     const utmCampaigns: Set<string> | null = selectedCampaign?.utmCampaigns?.length
       ? new Set(selectedCampaign.utmCampaigns.map((x) => x.toLowerCase()))
       : null;
@@ -365,6 +380,11 @@ function Profit() {
 
     const matchOrderToCampaign = (o: Order): boolean => {
       if (!selectedCampaign) return true;
+
+      // Per-shop market scope — only count orders coming from the shop that
+      // owns this market. /api/orders tags every order with `_shop` in ALL
+      // mode, so we use that as the scoping key.
+      if (ownerShop && o._shop && o._shop !== ownerShop) return false;
 
       if (useUtmMatch) {
         // Match if EITHER first-visit OR last-visit UTM hits one of the
@@ -390,8 +410,8 @@ function Profit() {
         return code ? campaignCountries.has(code) : false;
       }
 
-      // Campaign with no UTM and no country = matches all orders (campaign
-      // only filters its own spend, not the order set).
+      // Campaign with no UTM and no country = matches all orders for the
+      // owning shop (campaign only filters its own spend, not the order set).
       return true;
     };
 
