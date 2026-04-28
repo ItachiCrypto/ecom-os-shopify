@@ -178,19 +178,18 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
 
-  // In ALL mode, several config fields returned by the client are AGGREGATES across all shops
-  // (dailyAds = sum, soldeInitial = sum, monthlySubscriptions/bundles/productCosts/adCampaigns =
-  // union with prefixed ids). Writing them back to the master would corrupt master's own data
-  // and double-count on the next merge. Preserve master's per-shop fields untouched here —
-  // they must be edited per-shop.
+  // In ALL mode, only a handful of fields returned by the client are
+  // aggregates that would corrupt master if written back: soldeInitial
+  // (sum), dailyAds (per-shop sums), monthlySubscriptions / adCampaigns
+  // (union with shop-prefixed ids). Preserve those.
+  // productCosts and bundles ARE safely sharable now that they're SKU-keyed,
+  // so let edits flow through to be saved + mirrored to every shop.
   let nextConfig = body.config ?? existing.config;
   if (shop === ALL_SHOPS && body.config) {
     nextConfig = {
       ...body.config,
       soldeInitial: existing.config.soldeInitial,
       dailyAds: existing.config.dailyAds,
-      productCosts: existing.config.productCosts,
-      bundles: existing.config.bundles,
       monthlySubscriptions: existing.config.monthlySubscriptions,
       adCampaigns: existing.config.adCampaigns,
     };

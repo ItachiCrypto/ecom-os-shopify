@@ -48,11 +48,12 @@ function redis(): Redis {
 // Bumped from 30s → 5min: the dominant cost on cold-start requests is the
 // remote read; changes are still pushed through saveShopData.
 
-// Short per-instance cache (5s) — long enough to dedupe within a single
-// burst of API handlers, short enough that writes propagate quickly to
-// other Vercel function instances (each carries its own warm Map).
+// Per-instance cache disabled (TTL=0). On Vercel, function instances each
+// carry their own Map, so any positive TTL leaves stale snapshots floating
+// around after a write — and reads land on whichever instance the router
+// picks. Upstash Redis reads are ~10ms, so always-fresh is fine.
 const cache = new Map<string, { data: ShopData; expires: number }>();
-const CACHE_TTL = 5_000;
+const CACHE_TTL = 0;
 
 export function invalidateShopCache(shop?: string): void {
   if (shop) cache.delete(shop);
