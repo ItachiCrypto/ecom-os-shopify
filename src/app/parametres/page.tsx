@@ -66,18 +66,17 @@ function Parametres() {
       if (p?.products) setProducts(p.products);
     };
 
+    // No `onUpdate` subscriber for /api/data on this page — the form is
+    // editable, so a background SWR revalidation that lands while the user
+    // is mid-edit would clobber the in-progress changes (setConfig overrides
+    // their input). Initial fetch is enough; the user's edits stay
+    // authoritative until they save.
     Promise.all([
-      cachedFetch<{ data: { config: EcomConfig } }>("/api/data", {
-        onUpdate: (d) => apply(d, null, null),
-      }),
-      cachedFetch<{ shop?: ShopInfo; markets?: ShopifyMarket[] }>("/api/shop", {
-        onUpdate: (d) => apply(null, d, null),
-      }).catch(() => null),
+      cachedFetch<{ data: { config: EcomConfig } }>("/api/data"),
+      cachedFetch<{ shop?: ShopInfo; markets?: ShopifyMarket[] }>("/api/shop").catch(() => null),
       // ?all=true → aggregated products across every installed shop so the
       // SKU-keyed COGS / bundles editor can see all variants in one place.
-      cachedFetch<{ products?: ShopifyProduct[] }>("/api/products?all=true", {
-        onUpdate: (d) => apply(null, null, d),
-      }).catch(() => ({ products: [] })),
+      cachedFetch<{ products?: ShopifyProduct[] }>("/api/products?all=true").catch(() => ({ products: [] })),
     ]).then(([d, s, p]) => apply(d, s, p));
 
     return () => {
@@ -112,7 +111,12 @@ function Parametres() {
   }, [config, dirty]);
 
   if (!config) return <div>Chargement...</div>;
-  const set = (p: Partial<EcomConfig>) => { setConfig({ ...config, ...p }); setDirty(true); };
+  // Functional setState so two quick edits don't clobber each other
+  // (the second one would otherwise spread a stale `config` from closure).
+  const set = (p: Partial<EcomConfig>) => {
+    setConfig((c) => (c ? { ...c, ...p } : c));
+    setDirty(true);
+  };
 
   // Pays tirés des marchés Shopify (tous régions actives)
   const countries = markets.flatMap(m => m.regions.edges.map(e => e.node)).filter((c, i, arr) => arr.findIndex(x => x.code === c.code) === i);
