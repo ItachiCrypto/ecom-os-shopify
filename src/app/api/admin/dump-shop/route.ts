@@ -30,5 +30,14 @@ export async function GET(request: NextRequest) {
     shop: data.shop,
     adCampaigns: data.config.adCampaigns || [],
     dailyAds: data.config.dailyAds || {},
+    productCosts: data.config.productCosts || {},
+    bundles: data.config.bundles || [],
+    shippingCostByQty: data.config.shippingCostByQty || {},
+    urssaf: data.config.urssaf,
+    ir: data.config.ir,
+    tva: data.config.tva,
+    taxOnAdSpend: data.config.taxOnAdSpend,
+    soldeInitial: data.config.soldeInitial,
+    monthlySubscriptions: data.config.monthlySubscriptions || [],
   });
 }
