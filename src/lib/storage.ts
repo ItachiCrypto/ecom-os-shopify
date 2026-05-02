@@ -233,8 +233,13 @@ export async function listActiveShops(): Promise<string[]> {
 }
 
 // =============================================================================
-// Orders snapshot (Blob only — Redis 1MB limit can't hold 2500 orders)
+// Orders snapshot
 // =============================================================================
+// Two backends, picked by `pickBackend()`:
+//  - Redis (Upstash): chunked storage to fit within request-size limits.
+//    Meta key: `orders:meta:${slug}` → { lastSyncedAt, totalOrders, chunkCount }
+//    Chunk keys: `orders:chunk:${slug}:${i}` → JSON array of CHUNK_SIZE orders
+//  - Blob: single JSON file at orders/${slug}.json (used if Redis unavailable).
 
 export interface OrdersSnapshot {
   shop: string;
@@ -243,13 +248,31 @@ export interface OrdersSnapshot {
   orders: unknown[]; // Shopify Order shape, kept opaque here
 }
 
+interface OrdersMeta {
+  shop: string;
+  lastSyncedAt: string;
+  totalOrders: number;
+  chunkCount: number;
+  chunkSize: number;
+}
+
 function ordersBlobFilename(shop: string): string {
   return `orders/${shopSlug(shop)}.json`;
 }
+function ordersMetaKey(shop: string): string {
+  return `orders:meta:${shopSlug(shop)}`;
+}
+function ordersChunkKey(shop: string, i: number): string {
+  return `orders:chunk:${shopSlug(shop)}:${i}`;
+}
+
+// Each chunk holds at most CHUNK_SIZE orders. ~200 × ~5KB = ~1MB, comfortably
+// under Upstash request-size limits while keeping chunk count low for fast reads.
+const CHUNK_SIZE = 200;
 
 // Snapshots are large (5–15 MB). Reading them on every request is the whole
 // point of the snapshot pattern — but inside a single Vercel function instance
-// we can amortize blob reads. 60s in-memory cache to absorb burst reads from
+// we can amortize storage reads. 60s in-memory cache absorbs burst reads from
 // the same instance during one user session.
 const snapshotCache = new Map<string, { data: OrdersSnapshot; expires: number }>();
 const SNAPSHOT_CACHE_TTL = 60_000;
@@ -263,11 +286,57 @@ export async function getOrdersSnapshot(shop: string): Promise<OrdersSnapshot | 
   const hit = snapshotCache.get(shop);
   if (hit && hit.expires > Date.now()) return hit.data;
 
-  const token = getBlobToken();
-  if (!token) {
-    console.warn("[storage] No Blob token — orders snapshot unavailable");
+  const backend = pickBackend();
+  if (backend === "none") {
+    console.warn("[storage] No backend configured — orders snapshot unavailable");
     return null;
   }
+
+  try {
+    if (backend === "redis") {
+      return await getOrdersSnapshotFromRedis(shop);
+    }
+    return await getOrdersSnapshotFromBlob(shop);
+  } catch (e) {
+    console.error("[storage] getOrdersSnapshot error:", e);
+    return null;
+  }
+}
+
+async function getOrdersSnapshotFromRedis(shop: string): Promise<OrdersSnapshot | null> {
+  const r = redis();
+  const metaRaw = await r.get<OrdersMeta | string>(ordersMetaKey(shop));
+  if (!metaRaw) return null;
+  const meta: OrdersMeta = typeof metaRaw === "string" ? JSON.parse(metaRaw) : metaRaw;
+
+  if (meta.chunkCount === 0) {
+    return { shop, lastSyncedAt: meta.lastSyncedAt, totalOrders: 0, orders: [] };
+  }
+
+  // Read all chunks in parallel. Upstash supports HTTP/2 multiplexing, so this
+  // is roughly O(slowest chunk) wall-clock instead of O(chunkCount).
+  const keys = Array.from({ length: meta.chunkCount }, (_, i) => ordersChunkKey(shop, i));
+  const chunkData = await Promise.all(keys.map((k) => r.get<unknown[] | string>(k)));
+  const orders: unknown[] = [];
+  for (const chunk of chunkData) {
+    if (!chunk) continue;
+    const arr = typeof chunk === "string" ? (JSON.parse(chunk) as unknown[]) : chunk;
+    orders.push(...arr);
+  }
+
+  const data: OrdersSnapshot = {
+    shop,
+    lastSyncedAt: meta.lastSyncedAt,
+    totalOrders: orders.length,
+    orders,
+  };
+  snapshotCache.set(shop, { data, expires: Date.now() + SNAPSHOT_CACHE_TTL });
+  return data;
+}
+
+async function getOrdersSnapshotFromBlob(shop: string): Promise<OrdersSnapshot | null> {
+  const token = getBlobToken();
+  if (!token) return null;
   try {
     const blob = await get(ordersBlobFilename(shop), { access: "public", token });
     if (!blob?.stream) return null;
@@ -276,19 +345,63 @@ export async function getOrdersSnapshot(shop: string): Promise<OrdersSnapshot | 
     snapshotCache.set(shop, { data, expires: Date.now() + SNAPSHOT_CACHE_TTL });
     return data;
   } catch (e) {
-    // 404 = snapshot doesn't exist yet (first sync hasn't run). That's not an error.
     const msg = e instanceof Error ? e.message : String(e);
     if (msg.includes("404") || msg.toLowerCase().includes("not found")) return null;
-    console.error("[storage] getOrdersSnapshot error:", e);
-    return null;
+    throw e;
   }
 }
 
 export async function saveOrdersSnapshot(snapshot: OrdersSnapshot): Promise<void> {
-  const token = getBlobToken();
-  if (!token) {
-    throw new Error("Vercel Blob required to store orders snapshot. Set BLOB_READ_WRITE_TOKEN.");
+  const backend = pickBackend();
+  if (backend === "none") {
+    throw new Error("No storage backend configured for orders snapshot.");
   }
+  if (backend === "redis") {
+    await saveOrdersSnapshotToRedis(snapshot);
+  } else {
+    await saveOrdersSnapshotToBlob(snapshot);
+  }
+  snapshotCache.set(snapshot.shop, { data: snapshot, expires: Date.now() + SNAPSHOT_CACHE_TTL });
+}
+
+async function saveOrdersSnapshotToRedis(snapshot: OrdersSnapshot): Promise<void> {
+  const r = redis();
+  const orders = snapshot.orders;
+  const chunkCount = Math.ceil(orders.length / CHUNK_SIZE);
+
+  // Read previous chunkCount so we can delete leftover chunks if the new
+  // snapshot is smaller (rare, but happens if orders are deleted).
+  const prevMeta = await r.get<OrdersMeta | string>(ordersMetaKey(snapshot.shop));
+  const prev = prevMeta ? (typeof prevMeta === "string" ? JSON.parse(prevMeta) : prevMeta) as OrdersMeta : null;
+
+  // Write chunks in parallel
+  const chunkOps: Promise<unknown>[] = [];
+  for (let i = 0; i < chunkCount; i++) {
+    const slice = orders.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE);
+    chunkOps.push(r.set(ordersChunkKey(snapshot.shop, i), JSON.stringify(slice)));
+  }
+  // Delete leftover chunks from previous (smaller) snapshot
+  if (prev && prev.chunkCount > chunkCount) {
+    for (let i = chunkCount; i < prev.chunkCount; i++) {
+      chunkOps.push(r.del(ordersChunkKey(snapshot.shop, i)));
+    }
+  }
+  await Promise.all(chunkOps);
+
+  // Write meta last — atomicity from the reader's POV (if meta exists, all chunks do)
+  const meta: OrdersMeta = {
+    shop: snapshot.shop,
+    lastSyncedAt: snapshot.lastSyncedAt,
+    totalOrders: orders.length,
+    chunkCount,
+    chunkSize: CHUNK_SIZE,
+  };
+  await r.set(ordersMetaKey(snapshot.shop), JSON.stringify(meta));
+}
+
+async function saveOrdersSnapshotToBlob(snapshot: OrdersSnapshot): Promise<void> {
+  const token = getBlobToken();
+  if (!token) throw new Error("Vercel Blob token required.");
   await put(ordersBlobFilename(snapshot.shop), JSON.stringify(snapshot), {
     access: "public",
     contentType: "application/json",
@@ -296,5 +409,4 @@ export async function saveOrdersSnapshot(snapshot: OrdersSnapshot): Promise<void
     addRandomSuffix: false,
     allowOverwrite: true,
   });
-  snapshotCache.set(snapshot.shop, { data: snapshot, expires: Date.now() + SNAPSHOT_CACHE_TTL });
 }
