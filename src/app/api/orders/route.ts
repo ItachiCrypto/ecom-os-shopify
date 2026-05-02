@@ -6,10 +6,20 @@ import { convertAmount, getShopCurrency } from "@/lib/currency";
 import { jsonSWR } from "@/lib/http";
 import { ensureSnapshotExists, syncShopOrders } from "@/lib/sync";
 
-// How long a snapshot can sit before /api/orders triggers an automatic sync.
-// Manual syncs (Sync button) bypass this. Below the threshold we serve the
-// snapshot as-is — no Shopify roundtrip on page load.
-const STALE_AFTER_MS = 15 * 60_000; // 15 minutes
+// How long a snapshot can sit before /api/orders triggers a foreground sync.
+// Below this threshold we serve the snapshot as-is (fast). Above, we run an
+// incremental sync inline so a hard refresh always reflects new sales / refunds.
+//
+// 30s strikes a balance:
+//  - back-to-back navigations (Dashboard → Profit) reuse the snapshot
+//  - any F5 after ~30s catches changes made on Shopify side
+//  - incremental sync is ~1s, acceptable for an explicit refresh
+const SYNC_ON_LOAD_AFTER_MS = 30_000;
+
+// Bigger threshold for the lighter "background" sync — used when serving cached
+// snapshot and we just want to opportunistically refresh in the background so
+// the next call is fresher.
+const BACKGROUND_SYNC_AFTER_MS = 5 * 60_000;
 
 // Allow up to 60s for the first request after install (initial full snapshot)
 export const maxDuration = 60;
@@ -30,7 +40,14 @@ export async function GET(request: NextRequest) {
     try {
       const shops = await listActiveShops();
       const masterCurrency = await getShopCurrency(MASTER_SHOP);
-      const perShop = await Promise.all(shops.map((s) => loadShopOrders(s, masterCurrency)));
+      // Run sync in parallel for all shops so a 2-shop F5 still completes in ~1.5s
+      // (one shop's GraphQL doesn't block the other).
+      const perShop = await Promise.all(
+        shops.map(async (s) => {
+          await maybeSyncBeforeServing(s);
+          return loadShopOrders(s, masterCurrency);
+        })
+      );
       const merged = perShop.flat();
       // Sort by createdAt desc
       merged.sort((a, b) => {
@@ -60,11 +77,8 @@ export async function GET(request: NextRequest) {
 
   try {
     if (all) {
+      await maybeSyncBeforeServing(shop);
       const snapshot = await ensureSnapshotExists(shop);
-      // Background sync if stale (don't await — let it run, return current snapshot now)
-      if (Date.now() - new Date(snapshot.lastSyncedAt).getTime() > STALE_AFTER_MS) {
-        syncShopOrders(shop).catch((e) => console.error("[orders] background sync failed:", e));
-      }
       return jsonSWR(
         {
           orders: snapshot.orders,
@@ -85,12 +99,38 @@ export async function GET(request: NextRequest) {
   }
 }
 
+/**
+ * Run a foreground incremental sync if the snapshot is older than the
+ * SYNC_ON_LOAD threshold; trigger a background sync if older than the
+ * BACKGROUND threshold; otherwise no-op.
+ *
+ * `ensureSnapshotExists` is called inside `loadShopOrders`/the single-shop
+ * path *after* this so the foreground sync writes its result before we read.
+ */
+async function maybeSyncBeforeServing(shop: string): Promise<void> {
+  const snapshot = await getOrdersSnapshot(shop);
+  if (!snapshot) {
+    // No snapshot yet — initial sync handled by ensureSnapshotExists later.
+    return;
+  }
+  const ageMs = Date.now() - new Date(snapshot.lastSyncedAt).getTime();
+  if (ageMs > SYNC_ON_LOAD_AFTER_MS) {
+    // Foreground: caller awaits, fresh data is in Redis before we serve.
+    try {
+      await syncShopOrders(shop);
+    } catch (e) {
+      console.error("[orders] foreground sync failed for", shop, e);
+    }
+  } else if (ageMs > BACKGROUND_SYNC_AFTER_MS) {
+    // Background: serve current snapshot now, refresh for next caller.
+    syncShopOrders(shop).catch((e) =>
+      console.error("[orders] background sync failed for", shop, e)
+    );
+  }
+}
+
 async function loadShopOrders(shop: string, masterCurrency: string): Promise<unknown[]> {
   const snapshot = await ensureSnapshotExists(shop);
-  // Background sync if stale — don't block this request
-  if (Date.now() - new Date(snapshot.lastSyncedAt).getTime() > STALE_AFTER_MS) {
-    syncShopOrders(shop).catch((e) => console.error("[orders] background sync failed:", e));
-  }
   const shopCurrency = await getShopCurrency(shop);
   // Convert money to master currency so the aggregate dashboard sums apples to apples
   const normalized = normalizeOrders(snapshot.orders, shopCurrency, masterCurrency);
