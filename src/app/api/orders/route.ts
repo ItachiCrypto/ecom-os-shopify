@@ -11,6 +11,9 @@ import { ensureSnapshotExists, syncShopOrders } from "@/lib/sync";
 // snapshot as-is — no Shopify roundtrip on page load.
 const STALE_AFTER_MS = 15 * 60_000; // 15 minutes
 
+// Allow up to 60s for the first request after install (initial full snapshot)
+export const maxDuration = 60;
+
 export async function GET(request: NextRequest) {
   const shop = request.cookies.get(SHOP_COOKIE)?.value;
   if (!shop) {

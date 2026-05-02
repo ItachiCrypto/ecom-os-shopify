@@ -3,6 +3,10 @@ import { listActiveShops, getOrdersSnapshot } from "@/lib/storage";
 import { SHOP_COOKIE, ALL_SHOPS } from "@/lib/config";
 import { syncShopOrders } from "@/lib/sync";
 
+// Initial sync of 2500 orders × 2 shops easily exceeds the default 10s
+// serverless timeout. Cap is 60s on Hobby, 300s on Pro.
+export const maxDuration = 60;
+
 /**
  * GET → status: lastSyncedAt per shop, totalOrders.
  * POST → trigger sync for active shop (or all shops in __all__ mode).
