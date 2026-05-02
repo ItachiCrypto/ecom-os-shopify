@@ -108,6 +108,40 @@ export function invalidate(...urls: string[]): void {
   for (const url of urls) cache.delete(url);
 }
 
+/**
+ * Force a re-fetch and push the new data to existing subscribers.
+ *
+ * Use this (instead of `invalidate`) after a mutation when pages already
+ * mounted on this client need to see the fresh data without remounting.
+ *
+ * `invalidate` only drops the cache — subscribers go with it, so pages
+ * showing stale state in `useState` never get notified.
+ */
+export async function revalidate(...urls: string[]): Promise<void> {
+  await Promise.all(
+    urls.map(async (url) => {
+      const entry = cache.get(url);
+      const subscribers = entry?.subscribers ?? new Set<Subscriber<unknown>>();
+      // Append a cache-buster to dodge CDN/SWR caches that might serve a
+      // stale response for the original URL.
+      const busted = url + (url.includes("?") ? "&" : "?") + "_r=" + Date.now();
+      try {
+        const data = await rawFetch<unknown>(busted);
+        cache.set(url, { data, fetchedAt: now(), subscribers });
+        subscribers.forEach((cb) => {
+          try {
+            cb(data);
+          } catch {
+            // a subscriber crashing must not break others
+          }
+        });
+      } catch {
+        // Don't blow up the caller if revalidate fails — they'll see stale data.
+      }
+    })
+  );
+}
+
 /** Manually seed the cache (rarely needed). */
 export function seedCache<T>(url: string, data: T): void {
   cache.set(url, {

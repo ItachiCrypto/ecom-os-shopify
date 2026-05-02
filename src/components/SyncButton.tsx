@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { invalidate } from "@/lib/data-cache";
+import { revalidate } from "@/lib/data-cache";
 
 interface SyncStatus {
   shop: string;
@@ -73,8 +73,10 @@ export default function SyncButton() {
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const j = (await r.json()) as { results: ShopSyncResult[]; totalAdded: number; totalUpdated: number; durationMs: number };
 
-      // Bust the client-side data cache so /api/orders + /api/data re-fetch
-      invalidate("/api/orders?all=true", "/api/orders");
+      // Re-fetch and push fresh data to any pages still mounted (Dashboard,
+      // Profit, Paramètres). `invalidate` alone wouldn't notify subscribers —
+      // pages would keep their stale useState until they remount.
+      await revalidate("/api/orders?all=true", "/api/data", "/api/sync");
       await fetchStatus();
 
       if (!opts.silent) {

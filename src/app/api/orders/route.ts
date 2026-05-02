@@ -47,7 +47,10 @@ export async function GET(request: NextRequest) {
           normalizedCurrency: masterCurrency,
           lastSyncedAt,
         },
-        { maxAge: 30, swr: 300 }
+        // No CDN cache: we already serve from Redis (~100ms) and need fresh
+        // data right after a Sync click. Without this the CDN would hide a
+        // freshly-synced snapshot for up to 30s.
+        { maxAge: 0, swr: 0 }
       );
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Unknown error";
@@ -68,12 +71,13 @@ export async function GET(request: NextRequest) {
           count: snapshot.orders.length,
           lastSyncedAt: snapshot.lastSyncedAt,
         },
-        { maxAge: 30, swr: 300 }
+        // No CDN cache (see ALL mode comment above)
+        { maxAge: 0, swr: 0 }
       );
     }
     // Single-page (cursor-paginated, live from Shopify) — used when caller wants pagination
     const { orders, pageInfo } = await getOrders(shop, { first, query });
-    return jsonSWR({ orders, pageInfo }, { maxAge: 30, swr: 300 });
+    return jsonSWR({ orders, pageInfo }, { maxAge: 0, swr: 0 });
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Unknown error";
     console.error("[api/orders]", msg);
