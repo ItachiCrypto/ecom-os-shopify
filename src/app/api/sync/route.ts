@@ -57,17 +57,38 @@ export async function POST(request: NextRequest) {
 
   const targets = shop === ALL_SHOPS ? await listActiveShops() : [shop];
   const start = Date.now();
-  const results = await Promise.all(targets.map((s) => syncShopOrders(s, { force })));
 
-  const totalAdded = results.reduce((s, r) => s + r.added, 0);
-  const totalUpdated = results.reduce((s, r) => s + r.updated, 0);
+  // Run shops sequentially so a failure in one shop is reported clearly,
+  // and so we don't overrun Shopify's rate limit when both stores have
+  // hundreds of orders to fetch in parallel.
+  const results: Array<Awaited<ReturnType<typeof syncShopOrders>> | { shop: string; error: string }> = [];
+  for (const s of targets) {
+    try {
+      const r = await syncShopOrders(s, { force });
+      results.push(r);
+    } catch (e) {
+      const msg = e instanceof Error ? `${e.name}: ${e.message}` : String(e);
+      console.error(`[sync] ${s} failed:`, e);
+      results.push({ shop: s, error: msg });
+    }
+  }
 
-  return NextResponse.json({
-    ok: true,
-    mode: shop === ALL_SHOPS ? "all" : "single",
-    durationMs: Date.now() - start,
-    totalAdded,
-    totalUpdated,
-    results,
-  });
+  const successes = results.filter((r): r is Awaited<ReturnType<typeof syncShopOrders>> => !("error" in r));
+  const failures = results.filter((r): r is { shop: string; error: string } => "error" in r);
+
+  const totalAdded = successes.reduce((s, r) => s + r.added, 0);
+  const totalUpdated = successes.reduce((s, r) => s + r.updated, 0);
+
+  return NextResponse.json(
+    {
+      ok: failures.length === 0,
+      mode: shop === ALL_SHOPS ? "all" : "single",
+      durationMs: Date.now() - start,
+      totalAdded,
+      totalUpdated,
+      results,
+      failures,
+    },
+    { status: failures.length === 0 ? 200 : 207 } // 207 Multi-Status if partial failure
+  );
 }
