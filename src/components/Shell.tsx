@@ -7,6 +7,7 @@ import { cachedFetch } from "@/lib/data-cache";
 import { DateRangeProvider } from "./DateRangeContext";
 import DateRangePicker from "./DateRangePicker";
 import ShopSwitcher from "./ShopSwitcher";
+import SyncButton from "./SyncButton";
 
 const NAV = [
   { href: "/", label: "Dashboard", icon: "DB" },
@@ -68,6 +69,7 @@ export default function Shell({ children }: { children: React.ReactNode }) {
             </div>
           </div>
           <ShopSwitcher currentShopName={shop?.name} />
+          <SyncButton />
         </div>
 
         <nav className="sidebar-nav" aria-label="Navigation principale">

@@ -134,11 +134,28 @@ export async function getOrders(
   };
 }
 
-export async function getAllOrders(shop: string, maxPages = 10): Promise<unknown[]> {
+/**
+ * Fetch all orders, optionally only those updated after a given ISO timestamp.
+ *
+ * - `since` undefined → full history (paginated, capped at maxPages × 250 = 5000 by default)
+ * - `since` provided → incremental: fetches orders with `updated_at:>${since}` so refunds,
+ *   cancellations, and edits to old orders are detected without re-downloading everything.
+ *
+ * Sort by UPDATED_AT desc when filtering by since so the most recent edits come first
+ * (this matters if maxPages caps the result — we never want to lose a recent change).
+ */
+export async function getAllOrders(
+  shop: string,
+  options: { maxPages?: number; since?: string } = {}
+): Promise<unknown[]> {
+  const { maxPages = 20, since } = options;
   const allOrders: unknown[] = [];
   let after: string | undefined;
+  // Shopify search syntax: `updated_at:>=2026-04-23T15:32:00Z` (no quotes, ISO-like)
+  // Documented at https://shopify.dev/docs/api/usage/search-syntax
+  const query = since ? `updated_at:>${since}` : undefined;
   for (let i = 0; i < maxPages; i++) {
-    const { orders, pageInfo } = await getOrders(shop, { first: 250, after });
+    const { orders, pageInfo } = await getOrders(shop, { first: 250, after, query });
     allOrders.push(...orders);
     if (!pageInfo.hasNextPage) break;
     after = pageInfo.endCursor;

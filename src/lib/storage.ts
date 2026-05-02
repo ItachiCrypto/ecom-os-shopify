@@ -231,3 +231,70 @@ export async function listActiveShops(): Promise<string[]> {
   const configuredInstalled = CONFIGURED_SHOPS.filter((shop) => installedSet.has(shop));
   return configuredInstalled.length > 0 ? configuredInstalled : installed;
 }
+
+// =============================================================================
+// Orders snapshot (Blob only — Redis 1MB limit can't hold 2500 orders)
+// =============================================================================
+
+export interface OrdersSnapshot {
+  shop: string;
+  lastSyncedAt: string; // ISO 8601
+  totalOrders: number;
+  orders: unknown[]; // Shopify Order shape, kept opaque here
+}
+
+function ordersBlobFilename(shop: string): string {
+  return `orders/${shopSlug(shop)}.json`;
+}
+
+// Snapshots are large (5–15 MB). Reading them on every request is the whole
+// point of the snapshot pattern — but inside a single Vercel function instance
+// we can amortize blob reads. 60s in-memory cache to absorb burst reads from
+// the same instance during one user session.
+const snapshotCache = new Map<string, { data: OrdersSnapshot; expires: number }>();
+const SNAPSHOT_CACHE_TTL = 60_000;
+
+export function invalidateOrdersSnapshotCache(shop?: string): void {
+  if (shop) snapshotCache.delete(shop);
+  else snapshotCache.clear();
+}
+
+export async function getOrdersSnapshot(shop: string): Promise<OrdersSnapshot | null> {
+  const hit = snapshotCache.get(shop);
+  if (hit && hit.expires > Date.now()) return hit.data;
+
+  const token = getBlobToken();
+  if (!token) {
+    console.warn("[storage] No Blob token — orders snapshot unavailable");
+    return null;
+  }
+  try {
+    const blob = await get(ordersBlobFilename(shop), { access: "public", token });
+    if (!blob?.stream) return null;
+    const text = await new Response(blob.stream).text();
+    const data = JSON.parse(text) as OrdersSnapshot;
+    snapshotCache.set(shop, { data, expires: Date.now() + SNAPSHOT_CACHE_TTL });
+    return data;
+  } catch (e) {
+    // 404 = snapshot doesn't exist yet (first sync hasn't run). That's not an error.
+    const msg = e instanceof Error ? e.message : String(e);
+    if (msg.includes("404") || msg.toLowerCase().includes("not found")) return null;
+    console.error("[storage] getOrdersSnapshot error:", e);
+    return null;
+  }
+}
+
+export async function saveOrdersSnapshot(snapshot: OrdersSnapshot): Promise<void> {
+  const token = getBlobToken();
+  if (!token) {
+    throw new Error("Vercel Blob required to store orders snapshot. Set BLOB_READ_WRITE_TOKEN.");
+  }
+  await put(ordersBlobFilename(snapshot.shop), JSON.stringify(snapshot), {
+    access: "public",
+    contentType: "application/json",
+    token,
+    addRandomSuffix: false,
+    allowOverwrite: true,
+  });
+  snapshotCache.set(snapshot.shop, { data: snapshot, expires: Date.now() + SNAPSHOT_CACHE_TTL });
+}
